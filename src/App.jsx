@@ -1,15 +1,19 @@
-import React, { useMemo, useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Search, Bell, Settings, User, Plus, BarChart2, Package, Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon } from "lucide-react";
-
+// src/App.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
+import {
+  Search, Bell, Settings, User as UserIcon, LogOut, Plus, BarChart2, Package,
+  Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon,
+} from "lucide-react";
+import { supabase } from "./lib/supabaseClient";
 
 /**
  * Single-file React admin UI inspired by My Reseller Genie
  * - Tailwind CSS for styling
- * - No backend wired yet. Use this as a front-end starter
- * - Pages: Get Started, Dashboards, Transaction Details, Reports, Report Sale, Add Inventory, Add Expense, Integrations
- * - All features unlocked (no plan restrictions)
- * - Values shown in £ GBP by default
+ * - All features unlocked - no plan gates
+ * - Values shown in £ GBP
  */
 
 const NavButton = ({ icon: Icon, label, active, onClick }) => (
@@ -34,27 +38,97 @@ const Card = ({ title, children, right }) => (
   </div>
 );
 
-const TopBar = () => (
-  <div className="flex items-center justify-end gap-2 p-3">
-    <button className="p-2 rounded-full hover:bg-slate-100" title="Search">
-      <Search size={18} />
-    </button>
-    <button className="p-2 rounded-full hover:bg-slate-100" title="Notifications">
-      <Bell size={18} />
-    </button>
-    <button className="p-2 rounded-full hover:bg-slate-100" title="Settings">
-      <Settings size={18} />
-    </button>
-    <div className="w-8 h-8 rounded-full bg-slate-300 grid place-items-center" title="Account">
-      <User size={16} />
-    </div>
-  </div>
-);
+/* ------------------------- Top bar with user menu ------------------------- */
+const TopBar = () => {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setEmail(data?.user?.email || "");
+    });
+  }, []);
+
+  useEffect(() => {
+    function onClick(e) {
+      if (!open) return;
+      const clickInsideBtn = btnRef.current && btnRef.current.contains(e.target);
+      const clickInsideMenu = menuRef.current && menuRef.current.contains(e.target);
+      if (!clickInsideBtn && !clickInsideMenu) setOpen(false);
+    }
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [open]);
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    window.location.reload();
+  }
+
+  return (
+    <div className="relative flex items-center justify-end gap-2 p-3">
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Search">
+        <Search size={18} />
+      </button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Notifications">
+        <Bell size={18} />
+      </button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Settings">
+        <Settings size={18} />
+      </button>
+
+      {/* Avatar button */}
+      <button
+        ref={btnRef}
+        onClick={() => setOpen((s) => !s)}
+        className="w-9 h-9 rounded-full bg-slate-200 grid place-items-center hover:bg-slate-300"
+        title="Account"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <UserIcon size={18} />
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-3 top-14 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden"
+        >
+          <div className="px-3 py-2 text-sm text-slate-500 border-b truncate">
+            {email || "Signed in"}
+          </div>
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+            onClick={() => {
+              setOpen(false);
+              alert("Profile coming soon");
+            }}
+            role="menuitem"
+          >
+            Profile
+          </button>
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
+            onClick={handleSignOut}
+            role="menuitem"
+          >
+            <LogOut size={16} /> Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ------------------------------ Page: Intro ------------------------------ */
 function GetStarted() {
   return (
     <div className="space-y-6">
-      <Card title="Get Started" right={<></>}>
+      <Card title="Get Started">
         <p className="text-slate-700 max-w-2xl">
           Welcome. This setup wizard will help you configure your reselling workspace. Click the button to begin.
         </p>
@@ -66,6 +140,7 @@ function GetStarted() {
   );
 }
 
+/* ---------------------------- Page: Dashboard ---------------------------- */
 function Dashboard() {
   const data = useMemo(
     () => [
@@ -82,7 +157,7 @@ function Dashboard() {
     []
   );
 
-  const SmallStat = ({ label, value }) => (
+  const Stat = ({ label, value }) => (
     <div className="bg-white border border-slate-200 rounded-2xl p-4">
       <div className="text-sm text-slate-500">{label}</div>
       <div className="text-2xl font-semibold text-slate-800 mt-1">{value}</div>
@@ -92,13 +167,13 @@ function Dashboard() {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <SmallStat label="Income" value="£0.00" />
-        <SmallStat label="Expenses" value="£0.00" />
-        <SmallStat label="Profit (£)" value="£0.00" />
-        <SmallStat label="Profit (%)" value="0.00%" />
+        <Stat label="Income" value="£0.00" />
+        <Stat label="Expenses" value="£0.00" />
+        <Stat label="Profit (£)" value="£0.00" />
+        <Stat label="Profit (%)" value="0.00%" />
       </div>
 
-      <Card title="Profitability" right={<></>}>
+      <Card title="Profitability">
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ left: 12, right: 12 }}>
@@ -116,6 +191,7 @@ function Dashboard() {
   );
 }
 
+/* --------------------------- Small table helper -------------------------- */
 function DataTable({ columns, rows, empty = "No rows" }) {
   return (
     <div className="overflow-auto border border-slate-200 rounded-2xl">
@@ -123,26 +199,20 @@ function DataTable({ columns, rows, empty = "No rows" }) {
         <thead className="bg-slate-50 text-slate-600">
           <tr>
             {columns.map((c) => (
-              <th key={c} className="px-3 py-2 text-left whitespace-nowrap">
-                {c}
-              </th>
+              <th key={c} className="px-3 py-2 text-left whitespace-nowrap">{c}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 && (
             <tr>
-              <td colSpan={columns.length} className="px-3 py-6 text-center text-slate-500">
-                {empty}
-              </td>
+              <td colSpan={columns.length} className="px-3 py-6 text-center text-slate-500">{empty}</td>
             </tr>
           )}
           {rows.map((r, i) => (
             <tr key={i} className="border-t">
               {columns.map((c) => (
-                <td key={c} className="px-3 py-2 whitespace-nowrap text-slate-800">
-                  {r[c] ?? ""}
-                </td>
+                <td key={c} className="px-3 py-2 whitespace-nowrap text-slate-800">{r[c] ?? ""}</td>
               ))}
             </tr>
           ))}
@@ -152,6 +222,7 @@ function DataTable({ columns, rows, empty = "No rows" }) {
   );
 }
 
+/* ------------------------- Page: Transaction details --------------------- */
 function TransactionDetails() {
   const [tab, setTab] = useState("Inventory");
   const tabs = ["Inventory", "Sales", "Refunds", "Expenses"];
@@ -177,12 +248,12 @@ function TransactionDetails() {
         ))}
       </div>
 
-      <Card title={`$ {tab} Detail`.replace("$ ","") /* prevent template literal warning */}>
+      <Card title={`${tab} Detail`}>
         <div className="flex flex-wrap gap-2 mb-3">
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Filters</button>
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Columns</button>
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Density</button>
-          <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white flex items-center gap-2">Export</button>
+          <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Export</button>
         </div>
         <DataTable columns={columns} rows={[]} />
       </Card>
@@ -190,7 +261,8 @@ function TransactionDetails() {
   );
 }
 
-function Modal({ open, onClose, title, children, footer }) {
+/* --------------------------------- Modal -------------------------------- */
+function Modal({ open, onClose, title, children }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true">
@@ -200,17 +272,24 @@ function Modal({ open, onClose, title, children, footer }) {
           <button onClick={onClose} className="px-2 py-1 rounded hover:bg-slate-100">Close</button>
         </div>
         <div className="p-4">{children}</div>
-        <div className="border-t px-4 py-3 flex items-center justify-end gap-2">{footer}</div>
+        <div className="border-t px-4 py-3 flex items-center justify-end gap-2">
+          <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={onClose}>Add and Next</button>
+          <button className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white" onClick={onClose}>Add</button>
+        </div>
       </div>
     </div>
   );
 }
 
+/* ------------------------------ Report Sale ------------------------------ */
 function ReportSale() {
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-4">
-      <Card title="Report Sale" right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Quick View</button>}>
+      <Card
+        title="Report Sale"
+        right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Quick View</button>}
+      >
         <p className="text-slate-700">Open the Quick View to add a sale.</p>
       </Card>
 
@@ -226,20 +305,20 @@ function ReportSale() {
           <DateField label="Purchase Date" />
           <TextArea label="Sale Notes" className="md:col-span-2" />
         </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={() => setOpen(false)}>Add and Next</button>
-          <button className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white" onClick={() => setOpen(false)}>Add</button>
-        </div>
       </Modal>
     </div>
   );
 }
 
+/* ------------------------------ Add Inventory ---------------------------- */
 function AddInventory() {
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-4">
-      <Card title="Add Inventory" right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Open Form</button>}>
+      <Card
+        title="Add Inventory"
+        right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Open Form</button>}
+      >
         <p className="text-slate-700">Add a new item to inventory.</p>
       </Card>
 
@@ -260,20 +339,20 @@ function AddInventory() {
           <TextArea label="Notes" className="md:col-span-2" />
           <FileField label="Attach Receipt" />
         </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={() => setOpen(false)}>Add and Next</button>
-          <button className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white" onClick={() => setOpen(false)}>Add</button>
-        </div>
       </Modal>
     </div>
   );
 }
 
+/* ------------------------------- Add Expense ----------------------------- */
 function AddExpense() {
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-4">
-      <Card title="Add Expense" right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Open Form</button>}>
+      <Card
+        title="Add Expense"
+        right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Open Form</button>}
+      >
         <p className="text-slate-700">Record a business expense and link it to a sale if needed.</p>
       </Card>
 
@@ -288,15 +367,12 @@ function AddExpense() {
           <Select label="Linked Sale" options={["None","Most recent","Search later"]} />
           <FileField label="Attach Receipt" />
         </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={() => setOpen(false)}>Add and Next</button>
-          <button className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white" onClick={() => setOpen(false)}>Add</button>
-        </div>
       </Modal>
     </div>
   );
 }
 
+/* -------------------------------- Reports -------------------------------- */
 function Reports() {
   return (
     <div className="space-y-6">
@@ -307,21 +383,20 @@ function Reports() {
           <DateField label="Start Date" />
           <DateField label="End Date" />
         </div>
-        <button className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#2f6b8f] text-white px-4 py-2">
-          Run Report
-        </button>
+        <button className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#2f6b8f] text-white px-4 py-2">Run Report</button>
       </Card>
     </div>
   );
 }
 
+/* ------------------------------ Integrations ----------------------------- */
 function Integrations() {
   return (
     <div className="space-y-6">
       <Card title="Platform Integrations">
-        <IntegrationRow title="eBay" username="" platform="eBay" />
-        <IntegrationRow title="Poshmark" username="" platform="Poshmark" />
-        <IntegrationRow title="Mercari" username="" platform="Mercari" beta />
+        <IntegrationRow title="eBay" platform="eBay" />
+        <IntegrationRow title="Poshmark" platform="Poshmark" />
+        <IntegrationRow title="Mercari" platform="Mercari" beta />
       </Card>
       <Card title="Bank Integrations">
         <p className="text-slate-600">Connect your bank or credit card here. Bank feeds are available on this workspace.</p>
@@ -330,11 +405,11 @@ function Integrations() {
   );
 }
 
-function IntegrationRow({ title, username = "", platform, beta }) {
+function IntegrationRow({ title, platform, beta }) {
   return (
     <div className="grid grid-cols-12 items-center gap-2 py-3 border-b last:border-0">
       <div className="col-span-3 font-medium">{title}</div>
-      <div className="col-span-3 text-slate-600">{username || "Username"}</div>
+      <div className="col-span-3 text-slate-600">Username</div>
       <div className="col-span-2 text-slate-600">{platform}{beta ? "*" : ""}</div>
       <div className="col-span-2">
         <button className="px-3 py-1.5 rounded-lg border border-slate-200">Import</button>
@@ -347,7 +422,7 @@ function IntegrationRow({ title, username = "", platform, beta }) {
   );
 }
 
-// Small form inputs
+/* ------------------------------ Small inputs ----------------------------- */
 const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
 const labelCls = "text-sm text-slate-600";
 
@@ -362,7 +437,6 @@ function TextField({ label, prefix, type = "text", required, className }) {
     </label>
   );
 }
-
 function NumberField({ label, defaultValue = 0, className }) {
   return (
     <label className={`block ${className || ""}`}>
@@ -371,7 +445,6 @@ function NumberField({ label, defaultValue = 0, className }) {
     </label>
   );
 }
-
 function DateField({ label, className }) {
   return (
     <label className={`block ${className || ""}`}>
@@ -380,7 +453,6 @@ function DateField({ label, className }) {
     </label>
   );
 }
-
 function TextArea({ label, className }) {
   return (
     <label className={`block ${className || ""}`}>
@@ -389,20 +461,16 @@ function TextArea({ label, className }) {
     </label>
   );
 }
-
 function Select({ label, options = [], className }) {
   return (
     <label className={`block ${className || ""}`}>
       <span className={labelCls}>{label}</span>
       <select className={baseInput}>
-        {options.map((o) => (
-          <option key={o}>{o}</option>
-        ))}
+        {options.map((o) => <option key={o}>{o}</option>)}
       </select>
     </label>
   );
 }
-
 function FileField({ label, className }) {
   return (
     <label className={`block ${className || ""}`}>
@@ -412,6 +480,7 @@ function FileField({ label, className }) {
   );
 }
 
+/* --------------------------------- Pages --------------------------------- */
 const PAGES = {
   "Get Started": GetStarted,
   Dashboards: Dashboard,
@@ -423,6 +492,40 @@ const PAGES = {
   Integrations: Integrations,
 };
 
+function iconFor(name) {
+  switch (name) {
+    case "Get Started": return Home;
+    case "Dashboards": return BarChart2;
+    case "Transaction Details": return Package;
+    case "Reseller Reports": return FileText;
+    case "Report Sale": return ShoppingCart;
+    case "Add Inventory": return Package;
+    case "Add Expense": return Receipt;
+    case "Integrations": return LinkIcon;
+    default: return Layers;
+  }
+}
+
+function PageHeader({ name }) {
+  const quickRanges = ["Current day","Current week","Current month","Current year","Custom"];
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="text-2xl font-semibold text-slate-800">{name}</div>
+      <div className="flex items-center gap-2">
+        <select className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+          <option>Overview</option>
+          <option>By Platform</option>
+          <option>By Category</option>
+        </select>
+        {quickRanges.map((r) => (
+          <button key={r} className={`px-3 py-2 rounded-xl text-sm border border-slate-200 ${r === "Current year" ? "bg-[#1f4e6b] text-white" : "bg-white"}`}>{r}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------- App ----------------------------------- */
 export default function AdminApp() {
   const [page, setPage] = useState("Get Started");
   const PageComp = PAGES[page];
@@ -465,39 +568,6 @@ export default function AdminApp() {
           </div>
         </div>
       </main>
-    </div>
-  );
-}
-
-function iconFor(name) {
-  switch (name) {
-    case "Get Started": return Home;
-    case "Dashboards": return BarChart2;
-    case "Transaction Details": return Package;
-    case "Reseller Reports": return FileText;
-    case "Report Sale": return ShoppingCart;
-    case "Add Inventory": return Package;
-    case "Add Expense": return Receipt;
-    case "Integrations": return LinkIcon;
-    default: return Layers;
-  }
-}
-
-function PageHeader({ name }) {
-  const quickRanges = ["Current day","Current week","Current month","Current year","Custom"];
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="text-2xl font-semibold text-slate-800">{name}</div>
-      <div className="flex items-center gap-2">
-        <select className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
-          <option>Overview</option>
-          <option>By Platform</option>
-          <option>By Category</option>
-        </select>
-        {quickRanges.map((r) => (
-          <button key={r} className={`px-3 py-2 rounded-xl text-sm border border-slate-200 ${r === "Current year" ? "bg-[#1f4e6b] text-white" : "bg-white"}`}>{r}</button>
-        ))}
-      </div>
     </div>
   );
 }
