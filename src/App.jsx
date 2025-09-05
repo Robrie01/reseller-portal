@@ -539,7 +539,7 @@ export default function AdminApp() {
         <div className="flex items-center gap-2 px-2 py-3">
           <Layers size={22} className="text-[#2f6b8f]" />
           <div className="leading-tight">
-            <div className="font-semibold">Reseller Admin</div>
+            <div className="font-semibold">Reseller Portal</div>
             <div className="text-xs text-slate-500">All features unlocked</div>
           </div>
         </div>
