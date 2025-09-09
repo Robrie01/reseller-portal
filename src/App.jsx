@@ -5,29 +5,133 @@ import {
 } from "recharts";
 import {
   Search, Bell, Settings, User as UserIcon, LogOut, Plus, BarChart2, Package,
-  Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon,
+  Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon, Trash2, Pencil, X, Save
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
+import { addExpense, mapGLAccount } from "./db/expenses";
+import { addSale } from "./db/sales";
+import { getReceiptURL, deleteReceipt } from "./db/storage";
+import logoUrl from "./assets/reseller-logo.png";
 
-/**
- * Single-file React admin UI inspired by My Reseller Genie
- * - Tailwind CSS for styling
- * - All features unlocked - no plan gates
- * - Values shown in £ GBP
- */
 
+// ---------- tiny helpers ----------
+const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
+const labelCls = "text-sm text-slate-600";
+const fmtMoney = (n) => `£${Number(n || 0).toFixed(2)}`;
+
+const Button = ({ children, className = "", type = "button", ...rest }) => (
+  <button type={type} className={`px-3 py-2 rounded-xl text-sm ${className}`} {...rest}>
+    {children}
+  </button>
+);
+const IconBtn = ({ className = "", ...rest }) => (
+  <button className={`p-2 rounded-lg border border-slate-200 hover:bg-slate-50 ${className}`} {...rest} />
+);
+
+// Display as dd-mm-yyyy
+const fmtDate = (s) => {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); // 2025-09-01 or 2025-09-01T...
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  const d = new Date(s);
+  if (!isNaN(d)) {
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = d.getFullYear();
+    return `${dd}-${mm}-${yy}`;
+  }
+  return String(s);
+};
+
+/** Robust receipt opener using the centralized storage helper. */
+async function openReceipt(path) {
+  try {
+    if (!path) return alert("No receipt attached.");
+    if (/^https?:\/\//i.test(path)) {
+      window.open(path, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const url = await getReceiptURL(path);
+    if (!url) throw new Error("Could not create a link.");
+    window.open(url, "_blank", "noopener,noreferrer");
+  } catch (e) {
+    console.error(e);
+    alert("Could not open receipt: " + (e?.message || e));
+  }
+}
+
+// ---------- small inputs ----------
+function TextField({ label, id, prefix, type = "text", required, className, defaultValue }) {
+  return (
+    <label className={`block ${className || ""}`}>
+      <span className={labelCls}>{label}{required ? " *" : ""}</span>
+      <div className="mt-1 flex items-center gap-2">
+        {prefix ? <span className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-slate-600">{prefix}</span> : null}
+        <input id={id} type={type} defaultValue={defaultValue} className={baseInput} />
+      </div>
+    </label>
+  );
+}
+function NumberField({ label, id, defaultValue = 0, className }) {
+  return (
+    <label className={`block ${className || ""}`}>
+      <span className={labelCls}>{label}</span>
+      <input id={id} type="number" defaultValue={defaultValue} className={baseInput} />
+    </label>
+  );
+}
+function DateField({ label, id, className, defaultValue }) {
+  return (
+    <label className={`block ${className || ""}`}>
+      <span className={labelCls}>{label}</span>
+      <input id={id} type="date" defaultValue={defaultValue} className={baseInput} />
+    </label>
+  );
+}
+function TextArea({ label, id, className, defaultValue }) {
+  return (
+    <label className={`block ${className || ""}`}>
+      <span className={labelCls}>{label}</span>
+      <textarea id={id} rows={4} defaultValue={defaultValue} className={baseInput} />
+    </label>
+  );
+}
+function Select({ label, id, options = [], className, defaultValue }) {
+  return (
+    <label className={`block ${className || ""}`}>
+      <span className={labelCls}>{label}</span>
+      <select id={id} defaultValue={defaultValue} className={baseInput}>
+        {options.map((o) => {
+          const opt = typeof o === "string" ? { value: o, label: o } : o;
+          return (
+            <option key={opt.value ?? opt.label} value={opt.value}>
+              {opt.label}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  );
+}
+function FileField({ label, id, className }) {
+  return (
+    <label className={`block ${className || ""}`}>
+      <span className={labelCls}>{label}</span>
+      <input id={id} type="file" className={baseInput} />
+    </label>
+  );
+}
+
+// ---------- layout ----------
 const NavButton = ({ icon: Icon, label, active, onClick }) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-3 w-full text-left rounded-xl px-3 py-2 transition ${
-      active ? "bg-[#1f4e6b] text-white" : "text-slate-800 hover:bg-slate-100"
-    }`}
+    className={`flex items-center gap-3 w-full text-left rounded-xl px-3 py-2 transition ${active ? "bg-[#1f4e6b] text-white" : "text-slate-800 hover:bg-slate-100"}`}
   >
     <Icon size={18} />
     <span className="text-sm font-medium">{label}</span>
   </button>
 );
-
 const Card = ({ title, children, right }) => (
   <div className="bg-white rounded-2xl shadow-sm border border-slate-200">
     <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
@@ -38,7 +142,7 @@ const Card = ({ title, children, right }) => (
   </div>
 );
 
-/* ------------------------- Top bar with user menu ------------------------- */
+// ---------- top bar ----------
 const TopBar = () => {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -46,17 +150,15 @@ const TopBar = () => {
   const menuRef = useRef(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setEmail(data?.user?.email || "");
-    });
+    supabase.auth.getUser().then(({ data }) => setEmail(data?.user?.email || ""));
   }, []);
 
   useEffect(() => {
     function onClick(e) {
       if (!open) return;
-      const clickInsideBtn = btnRef.current && btnRef.current.contains(e.target);
-      const clickInsideMenu = menuRef.current && menuRef.current.contains(e.target);
-      if (!clickInsideBtn && !clickInsideMenu) setOpen(false);
+      const inBtn = btnRef.current && btnRef.current.contains(e.target);
+      const inMenu = menuRef.current && menuRef.current.contains(e.target);
+      if (!inBtn && !inMenu) setOpen(false);
     }
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
@@ -69,53 +171,24 @@ const TopBar = () => {
 
   return (
     <div className="relative flex items-center justify-end gap-2 p-3">
-      <button className="p-2 rounded-full hover:bg-slate-100" title="Search">
-        <Search size={18} />
-      </button>
-      <button className="p-2 rounded-full hover:bg-slate-100" title="Notifications">
-        <Bell size={18} />
-      </button>
-      <button className="p-2 rounded-full hover:bg-slate-100" title="Settings">
-        <Settings size={18} />
-      </button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Search"><Search size={18} /></button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Notifications"><Bell size={18} /></button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Settings"><Settings size={18} /></button>
 
-      {/* Avatar button */}
       <button
         ref={btnRef}
         onClick={() => setOpen((s) => !s)}
         className="w-9 h-9 rounded-full bg-slate-200 grid place-items-center hover:bg-slate-300"
-        title="Account"
-        aria-haspopup="menu"
-        aria-expanded={open}
+        title="Account" aria-haspopup="menu" aria-expanded={open}
       >
         <UserIcon size={18} />
       </button>
 
-      {/* Dropdown */}
       {open && (
-        <div
-          ref={menuRef}
-          role="menu"
-          className="absolute right-3 top-14 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden"
-        >
-          <div className="px-3 py-2 text-sm text-slate-500 border-b truncate">
-            {email || "Signed in"}
-          </div>
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-            onClick={() => {
-              setOpen(false);
-              alert("Profile coming soon");
-            }}
-            role="menuitem"
-          >
-            Profile
-          </button>
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
-            onClick={handleSignOut}
-            role="menuitem"
-          >
+        <div ref={menuRef} role="menu" className="absolute right-3 top-14 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+          <div className="px-3 py-2 text-sm text-slate-500 border-b truncate">{email || "Signed in"}</div>
+          <button className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setOpen(false); alert("Profile coming soon"); }} role="menuitem">Profile</button>
+          <button className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600" onClick={handleSignOut} role="menuitem">
             <LogOut size={16} /> Sign out
           </button>
         </div>
@@ -124,38 +197,30 @@ const TopBar = () => {
   );
 };
 
-/* ------------------------------ Page: Intro ------------------------------ */
+// ---------- pages ----------
 function GetStarted() {
   return (
     <div className="space-y-6">
       <Card title="Get Started">
-        <p className="text-slate-700 max-w-2xl">
-          Welcome. This setup wizard will help you configure your reselling workspace. Click the button to begin.
-        </p>
-        <button className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#2f6b8f] text-white px-4 py-2 hover:bg-[#1f4e6b]">
-          <Home size={16} /> Start Setup
-        </button>
+        <p className="text-slate-700 max-w-2xl">Welcome. This setup wizard will help you configure your reselling workspace. Click the button to begin.</p>
+        <Button className="mt-6 bg-[#2f6b8f] text-white hover:bg-[#1f4e6b]"><Home size={16} /> Start Setup</Button>
       </Card>
     </div>
   );
 }
 
-/* ---------------------------- Page: Dashboard ---------------------------- */
 function Dashboard() {
-  const data = useMemo(
-    () => [
-      { m: "1/2025", income: 0, expenses: 0 },
-      { m: "2/2025", income: 0, expenses: 0 },
-      { m: "3/2025", income: 0, expenses: 0 },
-      { m: "4/2025", income: 0, expenses: 0 },
-      { m: "5/2025", income: 0, expenses: 0 },
-      { m: "6/2025", income: 0, expenses: 0 },
-      { m: "7/2025", income: 0, expenses: 0 },
-      { m: "8/2025", income: 0, expenses: 0 },
-      { m: "9/2025", income: 0, expenses: 0 },
-    ],
-    []
-  );
+  const data = useMemo(() => [
+    { m: "1/2025", income: 0, expenses: 0 },
+    { m: "2/2025", income: 0, expenses: 0 },
+    { m: "3/2025", income: 0, expenses: 0 },
+    { m: "4/2025", income: 0, expenses: 0 },
+    { m: "5/2025", income: 0, expenses: 0 },
+    { m: "6/2025", income: 0, expenses: 0 },
+    { m: "7/2025", income: 0, expenses: 0 },
+    { m: "8/2025", income: 0, expenses: 0 },
+    { m: "9/2025", income: 0, expenses: 0 },
+  ], []);
 
   const Stat = ({ label, value }) => (
     <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -191,63 +256,64 @@ function Dashboard() {
   );
 }
 
-/* --------------------------- Small table helper -------------------------- */
-function DataTable({ columns, rows, empty = "No rows" }) {
-  return (
-    <div className="overflow-auto border border-slate-200 rounded-2xl">
-      <table className="min-w-full text-sm">
-        <thead className="bg-slate-50 text-slate-600">
-          <tr>
-            {columns.map((c) => (
-              <th key={c} className="px-3 py-2 text-left whitespace-nowrap">{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={columns.length} className="px-3 py-6 text-center text-slate-500">{empty}</td>
-            </tr>
-          )}
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t">
-              {columns.map((c) => (
-                <td key={c} className="px-3 py-2 whitespace-nowrap text-slate-800">{r[c] ?? ""}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+const SortHeader = ({ label, sortKey, activeKey, dir, onSort }) => (
+  <th className="px-3 py-2 text-left select-none cursor-pointer hover:underline" onClick={() => onSort(sortKey)} title="Click to sort">
+    {label}{activeKey === sortKey ? (dir === "asc" ? " ▲" : " ▼") : ""}
+  </th>
+);
+
+function useSortPage(rows) {
+  const [sortKey, setSortKey] = useState(null);
+  const [dir, setDir] = useState("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  function onSort(k) {
+    if (sortKey === k) setDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setDir("asc"); }
+  }
+
+  const sorted = useMemo(() => {
+    const copy = [...rows];
+    if (!sortKey) return copy;
+    copy.sort((a, b) => {
+      const av = a[sortKey]; const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "number" && typeof bv === "number") return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    if (dir === "desc") copy.reverse();
+    return copy;
+  }, [rows, sortKey, dir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const current = Math.min(page, totalPages);
+  const start = (current - 1) * pageSize;
+  const paged = sorted.slice(start, start + pageSize);
+  return { sortKey, dir, onSort, page: current, setPage, pageSize, setPageSize, totalPages, rows: paged, resetPage: () => setPage(1) };
 }
 
-/* ------------------------- Page: Transaction details --------------------- */
+const Pager = ({ page, setPage, totalPages }) => (
+  <div className="flex items-center gap-2 text-sm text-slate-600">
+    <Button className="border" onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</Button>
+    <span>Page {page} / {totalPages}</span>
+    <Button className="border" onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+  </div>
+);
+
 function TransactionDetails() {
   const [tab, setTab] = useState("Inventory");
   const tabs = ["Inventory", "Sales", "Refunds", "Expenses"];
-
-  const columns = useMemo(() => {
-    if (tab === "Inventory") return ["Item Title", "Quantity", "Department", "Category", "Vendor", "Brand", "Location", "SKU"];
-    if (tab === "Sales") return ["Item Sold", "Sale Price (£)", "Fees (£)", "Sale Platform", "Sale Date", "Purchase Price (£)", "Notes"];
-    if (tab === "Refunds") return ["Order", "Reason", "Amount (£)", "Date"];
-    return ["General Ledger Account", "Vendor", "Description", "Amount (£)", "Date", "Linked Sale"];
-  }, [tab]);
-
+  useMemo(() => null, []);
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         {tabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-3 py-2 rounded-xl border ${tab === t ? "bg-[#1f4e6b] text-white border-[#1f4e6b]" : "bg-white text-slate-800 border-slate-200"}`}
-          >
-            {t}
-          </button>
+          <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 rounded-xl border ${tab === t ? "bg-[#1f4e6b] text-white border-[#1f4e6b]" : "bg-white text-slate-800 border-slate-200"}`}>{t}</button>
         ))}
       </div>
-
       <Card title={`${tab} Detail`}>
         <div className="flex flex-wrap gap-2 mb-3">
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Filters</button>
@@ -255,14 +321,13 @@ function TransactionDetails() {
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Density</button>
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Export</button>
         </div>
-        <DataTable columns={columns} rows={[]} />
+        <div className="overflow-auto border border-slate-200 rounded-2xl p-6 text-slate-500">Choose a view to see details.</div>
       </Card>
     </div>
   );
 }
 
-/* --------------------------------- Modal -------------------------------- */
-function Modal({ open, onClose, title, children }) {
+function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true">
@@ -273,123 +338,804 @@ function Modal({ open, onClose, title, children }) {
         </div>
         <div className="p-4">{children}</div>
         <div className="border-t px-4 py-3 flex items-center justify-end gap-2">
-          <button className="px-3 py-2 rounded-xl bg-slate-100" onClick={onClose}>Add and Next</button>
-          <button className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white" onClick={onClose}>Add</button>
+          {footer ? footer : (<><Button className="bg-slate-100" onClick={onClose}>Add and Next</Button><Button className="bg-[#2f6b8f] text-white" onClick={onClose}>Add</Button></>)}
         </div>
       </div>
     </div>
   );
 }
 
-/* ------------------------------ Report Sale ------------------------------ */
+// ---------- Report Sale ----------
 function ReportSale() {
   const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } = useSortPage(rows);
+  const [editId, setEditId] = useState(null);
+  const [edit, setEdit] = useState({});
+
+  // Inventory suggestions
+  const [invList, setInvList] = useState([]);
+  const [query, setQuery] = useState("");
+  const [showSug, setShowSug] = useState(false);
+  const sugRef = useRef(null);
+
+  useEffect(() => {
+    supabase.from("inventory")
+      .select("id, title, quantity_on_hand, purchase_price, purchase_date")
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => { if (!error) setInvList(data || []); });
+  }, []);
+
+  useEffect(() => { resetPage(); }, [sortKey, dir, rows]);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!showSug) return;
+      if (sugRef.current && !sugRef.current.contains(e.target)) setShowSug(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [showSug]);
+
+  function selectInventory(row) {
+    setQuery(row.title);
+    setShowSug(false);
+    const idEl = document.getElementById("sale-inventory-id");
+    if (idEl) idEl.value = row.id;
+    const buyEl = document.getElementById("sale-buy");
+    if (buyEl && !buyEl.value) buyEl.value = row.purchase_price || 0;
+    const buyDateEl = document.getElementById("sale-buydate");
+    if (buyDateEl && !buyDateEl.value) {
+      const d = (row.purchase_date || "").slice(0, 10);
+      if (d) buyDateEl.value = d;
+    }
+  }
+
+  function onQueryChange(e) {
+    const val = e.target.value;
+    setQuery(val);
+    const exact = invList.find((x) => x.title === val);
+    const idEl = document.getElementById("sale-inventory-id");
+    if (idEl) idEl.value = exact ? exact.id : "";
+    if (exact) {
+      const buyEl = document.getElementById("sale-buy");
+      if (buyEl && !buyEl.value) buyEl.value = exact.purchase_price || 0;
+      const buyDateEl = document.getElementById("sale-buydate");
+      if (buyDateEl && !buyDateEl.value) {
+        const d = (exact.purchase_date || "").slice(0, 10);
+        if (d) buyDateEl.value = d;
+      }
+    }
+    setShowSug(true);
+  }
+
+  const filteredInv = useMemo(() => {
+    const v = query.trim().toLowerCase();
+    if (!v) return invList.slice(0, 10);
+    return invList.filter((r) => r.title.toLowerCase().includes(v)).slice(0, 10);
+  }, [invList, query]);
+
+  async function load() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("sales")
+      .select("id, item_sold, sale_price, shipping_cost, transaction_fees, platform, sale_date, purchase_price, receipt_path, created_at")
+      .order("created_at", { ascending: false });
+    if (!error) setRows(data || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function handleDelete(row) {
+    if (!confirm("Delete this sale?")) return;
+    const { error } = await supabase.from("sales").delete().eq("id", row.id);
+    if (error) return alert(error.message);
+    if (row.receipt_path) { try { await deleteReceipt(row.receipt_path); } catch (_) {} }
+    setRows((r) => r.filter((x) => x.id !== row.id));
+  }
+
+  function startEdit(r) { setEditId(r.id); setEdit({ ...r }); }
+  function cancelEdit() { setEditId(null); setEdit({}); }
+  async function saveEdit() {
+    const { error } = await supabase.from("sales").update({
+      item_sold: edit.item_sold,
+      sale_price: Number(edit.sale_price || 0),
+      shipping_cost: Number(edit.shipping_cost || 0),
+      transaction_fees: Number(edit.transaction_fees || 0),
+      platform: edit.platform,
+      sale_date: edit.sale_date,
+      purchase_price: Number(edit.purchase_price || 0)
+    }).eq("id", editId);
+    if (error) return alert(error.message);
+    await load();
+    cancelEdit();
+  }
+
   return (
     <div className="space-y-4">
       <Card
         title="Report Sale"
-        right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Quick View</button>}
+        right={<Button onClick={() => setOpen(true)} className="bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Quick View</Button>}
       >
         <p className="text-slate-700">Open the Quick View to add a sale.</p>
       </Card>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Report Sale">
+      <Card
+        title="Your Sales"
+        right={<div className="flex items-center gap-3 text-sm text-slate-500">{loading ? "Loading..." : `${rows.length} row(s)`}
+          <select className="border rounded-lg px-2 py-1" value={pageSize} onChange={(e)=>{setPageSize(Number(e.target.value)); setPage(1);}}>
+            <option>5</option><option>10</option><option>25</option>
+          </select>
+        </div>}
+      >
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <SortHeader label="Item" sortKey="item_sold" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Sale Price" sortKey="sale_price" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Fees" sortKey="transaction_fees" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Ship" sortKey="shipping_cost" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Platform" sortKey="platform" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Date" sortKey="sale_date" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Buy Price" sortKey="purchase_price" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <th className="px-3 py-2 text-left">Profit</th>
+                <th className="px-3 py-2 text-left">Receipt</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {viewRows.length === 0 && (<tr><td colSpan={10} className="px-3 py-6 text-center text-slate-500">No sales yet</td></tr>)}
+              {viewRows.map((r) => {
+                const profit = (Number(r.sale_price||0) - Number(r.purchase_price||0) - Number(r.shipping_cost||0) - Number(r.transaction_fees||0));
+                const isEdit = editId === r.id;
+                return (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-3 py-2">{isEdit ? <input className={baseInput} value={edit.item_sold||""} onChange={(e)=>setEdit({...edit, item_sold:e.target.value})}/> : r.item_sold}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.sale_price||0} onChange={(e)=>setEdit({...edit, sale_price:e.target.value})}/> : fmtMoney(r.sale_price)}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.transaction_fees||0} onChange={(e)=>setEdit({...edit, transaction_fees:e.target.value})}/> : fmtMoney(r.transaction_fees)}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.shipping_cost||0} onChange={(e)=>setEdit({...edit, shipping_cost:e.target.value})}/> : fmtMoney(r.shipping_cost)}</td>
+                    <td className="px-3 py-2 capitalize">{isEdit ? <input className={baseInput} value={edit.platform||""} onChange={(e)=>setEdit({...edit, platform:e.target.value})}/> : String(r.platform)}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="date" className={baseInput} value={edit.sale_date||""} onChange={(e)=>setEdit({...edit, sale_date:e.target.value})}/> : fmtDate(r.sale_date)}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.purchase_price||0} onChange={(e)=>setEdit({...edit, purchase_price:e.target.value})}/> : fmtMoney(r.purchase_price)}</td>
+                    <td className="px-3 py-2 font-medium">{fmtMoney(profit)}</td>
+                    <td className="px-3 py-2">{r.receipt_path ? (<Button className="border" onClick={() => openReceipt(r.receipt_path)}>View</Button>) : (<span className="text-slate-400">—</span>)}</td>
+                    <td className="px-3 py-2 text-right flex gap-2 justify-end">
+                      {isEdit ? (<><IconBtn title="Save" onClick={saveEdit}><Save size={16}/></IconBtn><IconBtn title="Cancel" onClick={cancelEdit}><X size={16}/></IconBtn></>)
+                        : (<><IconBtn title="Edit" onClick={() => startEdit(r)}><Pencil size={16}/></IconBtn><IconBtn title="Delete" onClick={() => handleDelete(r)}><Trash2 size={16}/></IconBtn></>)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 flex items-center justify-between"><Pager page={page} setPage={setPage} totalPages={totalPages} /></div>
+      </Card>
+
+      <Modal
+        open={open} onClose={() => setOpen(false)} title="Report Sale"
+        footer={<div className="flex gap-2">
+          <Button className="bg-slate-100" onClick={async () => { await save(false); }}>Add and Next</Button>
+          <Button className="bg-[#2f6b8f] text-white" onClick={async () => { await save(true); }}>Add</Button>
+        </div>}
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TextField label="Item Sold" />
-          <TextField label="Sale Price (£)" prefix="£" type="number" />
-          <TextField label="Shipping Cost (£)" prefix="£" type="number" />
-          <TextField label="Transaction Fees (£)" prefix="£" type="number" />
-          <Select label="Sale Platform" options={["No Sale Platform","eBay","Etsy","Vinted","Other"]} />
-          <DateField label="Sale Date" />
-          <TextField label="Purchase Price (£)" prefix="£" type="number" />
-          <DateField label="Purchase Date" />
-          <TextArea label="Sale Notes" className="md:col-span-2" />
+          <div className="block relative" ref={sugRef}>
+            <span className={labelCls}>Item Sold</span>
+            <input id="sale-item" className={`${baseInput} mt-1`} placeholder="Type to search inventory…" value={query} onChange={onQueryChange} onFocus={() => setShowSug(true)} autoComplete="off" />
+            {showSug && filteredInv.length > 0 && (
+              <div className="absolute z-20 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-auto">
+                {filteredInv.map((r) => (
+                  <button type="button" key={r.id} className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center justify-between" onClick={() => selectInventory(r)}>
+                    <span className="truncate">{r.title}</span>
+                    <span className="ml-3 text-xs text-slate-500">Qty {r.quantity_on_hand ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <input type="hidden" id="sale-inventory-id" />
+          <TextField label="Sale Price (£)" id="sale-price" prefix="£" type="number" />
+          <TextField label="Shipping Cost (£)" id="sale-ship" prefix="£" type="number" />
+          <TextField label="Transaction Fees (£)" id="sale-fees" prefix="£" type="number" />
+          <Select label="Sale Platform" id="sale-platform" options={[
+            { label: "No Sale Platform", value: "" },
+            { label: "eBay", value: "ebay" },
+            { label: "Etsy", value: "etsy" },
+            { label: "Vinted", value: "vinted" },
+            { label: "Other", value: "other" },
+          ]} />
+          <DateField label="Sale Date" id="sale-date" />
+          <TextField label="Purchase Price (£)" id="sale-buy" prefix="£" type="number" />
+          <DateField label="Purchase Date" id="sale-buydate" />
+          <TextArea label="Sale Notes" id="sale-notes" className="md:col-span-2" />
+          <FileField label="Attach Receipt" id="sale-receipt" className="md:col-span-2" />
         </div>
       </Modal>
     </div>
   );
+
+  async function save(closeAfter) {
+    const get = (id) => document.getElementById(id);
+    const rawPlatform = get("sale-platform").value;
+    const platform = rawPlatform === "" ? null : rawPlatform;
+
+    const values = {
+      item: get("sale-item").value,
+      inventory_id: get("sale-inventory-id").value || null,
+      sale_price: get("sale-price").value,
+      shipping_cost: get("sale-ship").value,
+      fees: get("sale-fees").value,
+      platform,
+      sale_date: get("sale-date").value,
+      buy_price: get("sale-buy").value,
+      buy_date: get("sale-buydate").value,
+      notes: get("sale-notes").value,
+      receiptFile: get("sale-receipt").files?.[0] || null,
+    };
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { alert("You are signed out. Please sign in and try again."); return; }
+
+    try {
+      await addSale(values);
+      if (values.inventory_id) {
+        const { data: invRow } = await supabase.from("inventory").select("quantity_on_hand").eq("id", values.inventory_id).single();
+        const current = Number(invRow?.quantity_on_hand || 0);
+        const newQty = Math.max(0, current - 1);
+        await supabase.from("inventory").update({ quantity_on_hand: newQty }).eq("id", values.inventory_id);
+      }
+      alert("Sale saved!");
+      await load();
+      if (closeAfter) setOpen(false);
+    } catch (err) {
+      console.error("addSale insert failed:", err);
+      const msg = err?.message || err?.error_description || (err?.details ? `${err.details} (${err.code || ""})` : "Something went wrong saving the sale.");
+      alert("Save failed: " + msg);
+    }
+  }
 }
 
-/* ------------------------------ Add Inventory ---------------------------- */
+// ---------- Add Inventory ----------
 function AddInventory() {
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } = useSortPage(rows);
+  const [editId, setEditId] = useState(null);
+  const [edit, setEdit] = useState({});
+
+  const get = (id) => document.getElementById(id);
+
+  async function load() {
+    setLoading(true);
+    const { data } = await supabase.from("inventory")
+      .select("id, title, vendor, purchase_price, quantity_on_hand, receipt_path, created_at")
+      .order("created_at", { ascending: false });
+    setRows(data || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+  useEffect(() => { resetPage(); }, [sortKey, dir, rows]);
+
+  async function handleDelete(row) {
+    if (!confirm("Delete this inventory item?")) return;
+    const { error } = await supabase.from("inventory").delete().eq("id", row.id);
+    if (error) return alert(error.message);
+    if (row.receipt_path) { try { await deleteReceipt(row.receipt_path); } catch (_) {} }
+    setRows((r) => r.filter((x) => x.id !== row.id));
+  }
+
+  function startEdit(r) { setEditId(r.id); setEdit({ ...r }); }
+  function cancelEdit() { setEditId(null); setEdit({}); }
+  async function saveEdit() {
+    const { error } = await supabase.from("inventory").update({
+      title: edit.title,
+      vendor: edit.vendor,
+      purchase_price: Number(edit.purchase_price || 0),
+      quantity_on_hand: Number(edit.quantity_on_hand || 0),
+    }).eq("id", editId);
+    if (error) return alert(error.message);
+    await load();
+    cancelEdit();
+  }
+
+  async function handleAdd(closeAfter = true) {
+    try {
+      setSaving(true);
+      const values = {
+        title: get("inv-title").value,
+        vendor: get("inv-vendor").value,
+        department: get("inv-department").value,
+        category: get("inv-category").value,
+        subcategory: get("inv-subcategory").value,
+        brand: get("inv-brand").value,
+        location: get("inv-location").value,
+        sku: get("inv-sku").value,
+        platform: get("inv-platform").value,
+        purchase_date: get("inv-date").value,
+        purchase_price: get("inv-price").value,
+        quantity: get("inv-qty").value,
+        notes: get("inv-notes").value,
+        receiptFile: get("inv-receipt").files?.[0] || null,
+      };
+      const { addInventoryFull } = await import("./db/inventory.js");
+      await addInventoryFull(values);
+
+      alert("Inventory item saved!");
+      await load();
+      if (closeAfter) {
+        setOpen(false);
+      } else {
+        get("inv-title").value = "";
+        get("inv-subcategory").value = "";
+        get("inv-brand").value = "";
+        get("inv-location").value = "";
+        get("inv-sku").value = "";
+        get("inv-date").value = "";
+        get("inv-price").value = "";
+        get("inv-qty").value = 1;
+        get("inv-notes").value = "";
+        if (get("inv-receipt")) get("inv-receipt").value = "";
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Save failed: " + (err?.message || err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <Card
-        title="Add Inventory"
-        right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Open Form</button>}
-      >
+      <Card title="Add Inventory" right={<Button onClick={() => setOpen(true)} className="bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16} /> Open Form</Button>}>
         <p className="text-slate-700">Add a new item to inventory.</p>
       </Card>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Add Inventory">
+      <Card
+        title="Your Inventory"
+        right={<div className="flex items-center gap-3 text-sm text-slate-500">
+          {loading ? "Loading..." : `${rows.length} row(s)`}
+          <select className="border rounded-lg px-2 py-1" value={pageSize} onChange={(e)=>{setPageSize(Number(e.target.value)); setPage(1);}}>
+            <option>5</option><option>10</option><option>25</option>
+          </select>
+        </div>}
+      >
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <SortHeader label="Title" sortKey="title" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Vendor" sortKey="vendor" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Purchase Price" sortKey="purchase_price" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Qty" sortKey="quantity_on_hand" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <th className="px-3 py-2">Receipt</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {viewRows.length === 0 && (<tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No inventory</td></tr>)}
+              {viewRows.map((r) => {
+                const isEdit = editId === r.id;
+                return (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-3 py-2">{isEdit ? <input className={baseInput} value={edit.title||""} onChange={(e)=>setEdit({...edit, title:e.target.value})}/> : r.title}</td>
+                    <td className="px-3 py-2">{isEdit ? <input className={baseInput} value={edit.vendor||""} onChange={(e)=>setEdit({...edit, vendor:e.target.value})}/> : r.vendor}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.purchase_price||0} onChange={(e)=>setEdit({...edit, purchase_price:e.target.value})}/> : fmtMoney(r.purchase_price)}</td>
+                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.quantity_on_hand||0} onChange={(e)=>setEdit({...edit, quantity_on_hand:e.target.value})}/> : r.quantity_on_hand}</td>
+                    <td className="px-3 py-2">{r.receipt_path ? (<Button className="border" onClick={() => openReceipt(r.receipt_path)}>View</Button>) : (<span className="text-slate-400">—</span>)}</td>
+                    <td className="px-3 py-2 text-right flex gap-2 justify-end">
+                      {isEdit ? (<><IconBtn title="Save" onClick={saveEdit}><Save size={16}/></IconBtn><IconBtn title="Cancel" onClick={cancelEdit}><X size={16}/></IconBtn></>)
+                        : (<><IconBtn title="Edit" onClick={() => startEdit(r)}><Pencil size={16}/></IconBtn><IconBtn title="Delete" onClick={() => handleDelete(r)}><Trash2 size={16}/></IconBtn></>)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 flex items-center justify-between"><Pager page={page} setPage={setPage} totalPages={totalPages} /></div>
+      </Card>
+
+      <Modal
+        open={open} onClose={() => setOpen(false)} title="Add Inventory"
+        footer={<><Button className="bg-slate-100" onClick={() => handleAdd(false)} disabled={saving}>{saving ? "Saving..." : "Add and Next"}</Button>
+          <Button className="bg-[#2f6b8f] text-white" onClick={() => handleAdd(true)} disabled={saving}>{saving ? "Saving..." : "Add"}</Button></>}
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TextField label="Item Title" required />
-          <Select label="Vendor" options={["No vendor","Temu","Amazon","Wholesaler","Other"]} />
-          <Select label="Department" options={["General","Electronics","Clothing","Other"]} />
-          <Select label="Category" options={["Accessories","Computers","Parts","Other"]} />
-          <TextField label="Sub category" />
-          <TextField label="Brand" />
-          <TextField label="Location" />
-          <TextField label="SKU" />
-          <Select label="Platforms Listed" options={["eBay","Etsy","Vinted","None"]} />
-          <DateField label="Purchase Date" />
-          <TextField label="Purchase Price (£)" prefix="£" type="number" />
-          <NumberField label="Quantity" defaultValue={1} />
-          <TextArea label="Notes" className="md:col-span-2" />
-          <FileField label="Attach Receipt" />
+          <TextField label="Item Title" id="inv-title" required />
+          <Select label="Vendor" id="inv-vendor" options={["No vendor", "Temu", "Amazon", "Wholesaler", "Other"]} />
+          <Select label="Department" id="inv-department" options={["General", "Electronics", "Clothing", "Other"]} />
+          <Select label="Category" id="inv-category" options={["Accessories", "Computers", "Parts", "Other"]} />
+          <TextField label="Sub category" id="inv-subcategory" />
+          <TextField label="Brand" id="inv-brand" />
+          <TextField label="Location" id="inv-location" />
+          <TextField label="SKU" id="inv-sku" />
+          <Select label="Platforms Listed" id="inv-platform" options={["eBay", "Etsy", "Vinted", "None"]} />
+          <DateField label="Purchase Date" id="inv-date" />
+          <TextField label="Purchase Price (£)" id="inv-price" prefix="£" type="number" />
+          <NumberField label="Quantity" id="inv-qty" defaultValue={1} />
+          <TextArea label="Notes" id="inv-notes" className="md:col-span-2" />
+          <FileField label="Attach Receipt" id="inv-receipt" />
         </div>
       </Modal>
     </div>
   );
 }
 
-/* ------------------------------- Add Expense ----------------------------- */
+// ---------- Add Expense ----------
 function AddExpense() {
+  // ---- state / paging ----
   const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } = useSortPage(rows);
+  const [editId, setEditId] = useState(null);
+  const [edit, setEdit] = useState({});
+
+  // ---- dropdown data (GL + Vendors) ----
+  const DEFAULT_GL = ["Postage", "Packaging", "Software and apps", "Advertising", "Other"];
+  const [glOpts, setGlOpts] = useState(DEFAULT_GL);
+  const [vendors, setVendors] = useState(["No vendor", "Amazon", "eBay"]);
+
+  // ---- linked sale quick-search ----
+  const [saleList, setSaleList] = useState([]);
+  const [saleQuery, setSaleQuery] = useState("");
+  const [showSaleSug, setShowSaleSug] = useState(false);
+  const saleSugRef = useRef(null);
+
+  // ------- load data -------
+  async function load() {
+    setLoading(true);
+    const { data } = await supabase
+      .from("expenses")
+      .select("id, gl_account, vendor, description, amount, date, bank_account, receipt_path, created_at")
+      .order("created_at", { ascending: false });
+    setRows(data || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+  useEffect(() => { resetPage(); }, [sortKey, dir, rows]);
+
+  useEffect(() => {
+    supabase
+      .from("sales")
+      .select("id, item_sold")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setSaleList(data || []));
+  }, []);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!showSaleSug) return;
+      if (saleSugRef.current && !saleSugRef.current.contains(e.target)) setShowSaleSug(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [showSaleSug]);
+
+  // ------- table actions -------
+  async function handleDelete(row) {
+    if (!confirm("Delete this expense?")) return;
+    const { error } = await supabase.from("expenses").delete().eq("id", row.id);
+    if (error) return alert(error.message);
+    if (row.receipt_path) {
+      try { await deleteReceipt(row.receipt_path); } catch (_) {}
+    }
+    setRows((r) => r.filter((x) => x.id !== row.id));
+  }
+
+  function startEdit(r) { setEditId(r.id); setEdit({ ...r }); }
+  function cancelEdit() { setEditId(null); setEdit({}); }
+  async function saveEdit() {
+    const { error } = await supabase.from("expenses").update({
+      gl_account: mapGLAccount(edit.gl_account),
+      vendor: edit.vendor,
+      description: edit.description,
+      amount: Number(edit.amount || 0),
+      date: edit.date,
+      bank_account: edit.bank_account,
+    }).eq("id", editId);
+    if (error) return alert(error.message);
+    await load();
+    cancelEdit();
+  }
+
+  // ------- form helpers -------
+  const get = (id) => document.getElementById(id);
+  function clearForm() {
+    get("exp-ledger").value = "";
+    get("exp-gl-label").value = "";
+    get("exp-vendor").value = "No vendor";
+    get("exp-desc").value = "";
+    get("exp-amount").value = "";
+    get("exp-date").value = "";
+    get("exp-bank").value = "";
+    const q = get("exp-linked-search"); if (q) q.value = "";
+    const hid = get("exp-linked-id"); if (hid) hid.value = "";
+    const f = get("exp-receipt"); if (f) f.value = "";
+  }
+
+  async function save(closeAfter) {
+    try {
+      setSaving(true);
+
+      // read the user-facing label and let addExpense map it via mapGLAccount
+      const glLabel = get("exp-gl-label").value || get("exp-ledger").value;
+
+      const values = {
+        gl_account_label: glLabel,        // <- pass label; db/expenses will map it
+        vendor: get("exp-vendor").value,
+        description: get("exp-desc").value,
+        amount: get("exp-amount").value,
+        date: get("exp-date").value,
+        bank_account: get("exp-bank").value,
+        linked_sale: get("exp-linked-id").value || null,
+        receiptFile: get("exp-receipt").files?.[0] || null,
+      };
+
+      await addExpense(values);
+      alert("Expense saved!");
+      await load();
+      if (closeAfter) setOpen(false);
+      else clearForm();
+    } catch (err) {
+      console.error(err);
+      alert("Save failed: " + (err?.message || err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ------- UI -------
   return (
     <div className="space-y-4">
-      <Card
-        title="Add Expense"
-        right={<button onClick={() => setOpen(true)} className="px-3 py-2 rounded-xl bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16}/> Open Form</button>}
-      >
+      <Card title="Add Expense" right={
+        <Button onClick={() => setOpen(true)} className="bg-[#2f6b8f] text-white flex items-center gap-2">
+          <Plus size={16}/> Open Form
+        </Button>
+      }>
         <p className="text-slate-700">Record a business expense and link it to a sale if needed.</p>
       </Card>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Add Expense">
+      <Card
+        title="Your Expenses"
+        right={
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            {loading ? "Loading..." : `${rows.length} row(s)`}
+            <select className="border rounded-lg px-2 py-1" value={pageSize} onChange={(e)=>{setPageSize(Number(e.target.value)); setPage(1);}}>
+              <option>5</option><option>10</option><option>25</option>
+            </select>
+          </div>
+        }
+      >
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <SortHeader label="GL" sortKey="gl_account" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Vendor" sortKey="vendor" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Description" sortKey="description" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Amount" sortKey="amount" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Date" sortKey="date" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Bank" sortKey="bank_account" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <th className="px-3 py-2">Receipt</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {viewRows.length === 0 && (
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">No expenses yet</td></tr>
+              )}
+              {viewRows.map((r) => {
+                const isEdit = editId === r.id;
+                return (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input className={baseInput} value={edit.gl_account || ""} onChange={(e) => setEdit({ ...edit, gl_account: e.target.value })} />
+                        : String(r.gl_account)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input className={baseInput} value={edit.vendor || ""} onChange={(e) => setEdit({ ...edit, vendor: e.target.value })} />
+                        : r.vendor}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input className={baseInput} value={edit.description || ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
+                        : r.description}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input type="number" className={baseInput} value={edit.amount || 0} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} />
+                        : fmtMoney(r.amount)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input type="date" className={baseInput} value={edit.date || ""} onChange={(e) => setEdit({ ...edit, date: e.target.value })} />
+                        : fmtDate(r.date)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input className={baseInput} value={edit.bank_account || ""} onChange={(e) => setEdit({ ...edit, bank_account: e.target.value })} />
+                        : r.bank_account}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.receipt_path
+                        ? <Button className="border" onClick={() => openReceipt(r.receipt_path)}>View</Button>
+                        : <span className="text-slate-400">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right flex gap-2 justify-end">
+                      {isEdit ? (
+                        <>
+                          <IconBtn title="Save" onClick={saveEdit}><Save size={16} /></IconBtn>
+                          <IconBtn title="Cancel" onClick={cancelEdit}><X size={16} /></IconBtn>
+                        </>
+                      ) : (
+                        <>
+                          <IconBtn title="Edit" onClick={() => startEdit(r)}><Pencil size={16} /></IconBtn>
+                          <IconBtn title="Delete" onClick={() => handleDelete(r)}><Trash2 size={16} /></IconBtn>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <Pager page={page} setPage={setPage} totalPages={totalPages} />
+        </div>
+      </Card>
+
+      {/* ---- Add Expense modal ---- */}
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Add Expense"
+        footer={
+          <>
+            <Button className="bg-slate-100" onClick={() => save(false)} disabled={saving}>
+              {saving ? "Saving..." : "Add and Next"}
+            </Button>
+            <Button className="bg-[#2f6b8f] text-white" onClick={() => save(true)} disabled={saving}>
+              {saving ? "Saving..." : "Add"}
+            </Button>
+          </>
+        }
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Select label="General Ledger Account" options={["Postage","Packaging","Software and apps","Advertising","Other"]} />
-          <Select label="Vendor" options={["No vendor","Royal Mail","Temu","Amazon","Other"]} />
-          <TextField label="Description" />
-          <TextField label="Amount (£)" prefix="£" type="number" />
-          <DateField label="Date" />
-          <TextField label="Bank Account" />
-          <Select label="Linked Sale" options={["None","Most recent","Search later"]} />
-          <FileField label="Attach Receipt" />
+          {/* GL with Add New */}
+          <label className="block">
+            <span className="text-sm text-slate-600">General Ledger Account *</span>
+            <select
+              id="exp-ledger"
+              className={baseInput}
+              onChange={(e) => {
+                if (e.target.value === "__add__") {
+                  const name = prompt("Add General Ledger Account name:");
+                  if (name && name.trim()) {
+                    const clean = name.trim();
+                    setGlOpts((o) => [clean, ...o]);
+                    const hid = document.getElementById("exp-gl-label");
+                    if (hid) hid.value = clean;
+                    e.target.value = clean;
+                  } else {
+                    e.target.value = "";
+                  }
+                } else {
+                  const hid = document.getElementById("exp-gl-label");
+                  if (hid) hid.value = e.target.value;
+                }
+              }}
+            >
+              <option value="">Select…</option>
+              <option value="__add__">Add New Account…</option>
+              {glOpts.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+          <input id="exp-gl-label" type="hidden" />
+
+          {/* Vendor with Add New */}
+          <label className="block">
+            <span className="text-sm text-slate-600">Vendor</span>
+            <select
+              id="exp-vendor"
+              className={baseInput}
+              defaultValue="No vendor"
+              onChange={(e) => {
+                if (e.target.value === "__add__") {
+                  const name = prompt("Add Vendor name:");
+                  if (name && name.trim()) {
+                    const clean = name.trim();
+                    setVendors((o) => [clean, ...o.filter((v) => v !== clean)]);
+                    e.target.value = clean;
+                  } else {
+                    e.target.value = "No vendor";
+                  }
+                }
+              }}
+            >
+              <option value="No vendor">No vendor</option>
+              <option value="__add__">Add new vendor…</option>
+              {vendors.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </label>
+
+          <TextField label="Description" id="exp-desc" />
+          <TextField label="Amount (£)" id="exp-amount" prefix="£" type="number" />
+          <DateField label="Date" id="exp-date" />
+          <TextField label="Bank Account" id="exp-bank" />
+
+          {/* Linked Sale search */}
+          <div className="block relative" ref={saleSugRef}>
+            <span className={labelCls}>Linked Sale</span>
+            <input
+              id="exp-linked-search"
+              className={`${baseInput} mt-1`}
+              placeholder="Type to search your sales…"
+              onFocus={() => setShowSaleSug(true)}
+              onChange={(e) => { setSaleQuery(e.target.value); setShowSaleSug(true); }}
+              autoComplete="off"
+            />
+            <input id="exp-linked-id" type="hidden" />
+            {showSaleSug && (
+              <div className="absolute z-20 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-auto">
+                {saleList
+                  .filter((s) => saleQuery ? s.item_sold.toLowerCase().includes(saleQuery.toLowerCase()) : true)
+                  .slice(0, 10)
+                  .map((s) => (
+                    <button
+                      type="button"
+                      key={s.id}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-50"
+                      onClick={() => {
+                        const q = document.getElementById("exp-linked-search");
+                        const hid = document.getElementById("exp-linked-id");
+                        if (q) q.value = s.item_sold;
+                        if (hid) hid.value = s.id;
+                        setShowSaleSug(false);
+                      }}
+                    >
+                      {s.item_sold}
+                    </button>
+                  ))}
+                {!saleList.length && <div className="px-3 py-2 text-slate-500">No sales yet</div>}
+              </div>
+            )}
+          </div>
+
+          <FileField label="Attach Receipt" id="exp-receipt" />
         </div>
       </Modal>
     </div>
   );
 }
 
-/* -------------------------------- Reports -------------------------------- */
+
+// ---------- Reports ----------
 function Reports() {
   return (
     <div className="space-y-6">
       <Card title="Reseller Reports">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Select label="Report Type" options={["Profit/Loss Statement","Inventory Report","Platform Transactions","Sales Tax Report","Schedule C Generator"]} />
-          <Select label="Period" options={["Current day","Current week","Current month","Current year","Custom"]} />
-          <DateField label="Start Date" />
-          <DateField label="End Date" />
+          <Select label="Report Type" id="rep-type" options={["Profit/Loss Statement","Inventory Report","Platform Transactions","Sales Tax Report","Schedule C Generator"]} />
+          <Select label="Period" id="rep-period" options={["Current day","Current week","Current month","Current year","Custom"]} />
+          <DateField label="Start Date" id="rep-start" />
+          <DateField label="End Date" id="rep-end" />
         </div>
-        <button className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#2f6b8f] text-white px-4 py-2">Run Report</button>
+        <Button className="mt-4 bg-[#2f6b8f] text-white">Run Report</Button>
       </Card>
     </div>
   );
 }
 
-/* ------------------------------ Integrations ----------------------------- */
+// ---------- Integrations ----------
 function Integrations() {
   return (
     <div className="space-y-6">
@@ -404,16 +1150,13 @@ function Integrations() {
     </div>
   );
 }
-
 function IntegrationRow({ title, platform, beta }) {
   return (
     <div className="grid grid-cols-12 items-center gap-2 py-3 border-b last:border-0">
       <div className="col-span-3 font-medium">{title}</div>
       <div className="col-span-3 text-slate-600">Username</div>
       <div className="col-span-2 text-slate-600">{platform}{beta ? "*" : ""}</div>
-      <div className="col-span-2">
-        <button className="px-3 py-1.5 rounded-lg border border-slate-200">Import</button>
-      </div>
+      <div className="col-span-2"><Button className="border border-slate-200">Import</Button></div>
       <div className="col-span-2 flex gap-2 justify-end">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox"/> Daily Sales</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox"/> Inventory</label>
@@ -422,65 +1165,7 @@ function IntegrationRow({ title, platform, beta }) {
   );
 }
 
-/* ------------------------------ Small inputs ----------------------------- */
-const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
-const labelCls = "text-sm text-slate-600";
-
-function TextField({ label, prefix, type = "text", required, className }) {
-  return (
-    <label className={`block ${className || ""}`}>
-      <span className={labelCls}>{label}{required ? " *" : ""}</span>
-      <div className="mt-1 flex items-center gap-2">
-        {prefix ? <span className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-slate-600">{prefix}</span> : null}
-        <input type={type} className={baseInput} />
-      </div>
-    </label>
-  );
-}
-function NumberField({ label, defaultValue = 0, className }) {
-  return (
-    <label className={`block ${className || ""}`}>
-      <span className={labelCls}>{label}</span>
-      <input type="number" defaultValue={defaultValue} className={baseInput} />
-    </label>
-  );
-}
-function DateField({ label, className }) {
-  return (
-    <label className={`block ${className || ""}`}>
-      <span className={labelCls}>{label}</span>
-      <input type="date" className={baseInput} />
-    </label>
-  );
-}
-function TextArea({ label, className }) {
-  return (
-    <label className={`block ${className || ""}`}>
-      <span className={labelCls}>{label}</span>
-      <textarea rows={4} className={baseInput} />
-    </label>
-  );
-}
-function Select({ label, options = [], className }) {
-  return (
-    <label className={`block ${className || ""}`}>
-      <span className={labelCls}>{label}</span>
-      <select className={baseInput}>
-        {options.map((o) => <option key={o}>{o}</option>)}
-      </select>
-    </label>
-  );
-}
-function FileField({ label, className }) {
-  return (
-    <label className={`block ${className || ""}`}>
-      <span className={labelCls}>{label}</span>
-      <input type="file" className={baseInput} />
-    </label>
-  );
-}
-
-/* --------------------------------- Pages --------------------------------- */
+// ---------- page registry & shell ----------
 const PAGES = {
   "Get Started": GetStarted,
   Dashboards: Dashboard,
@@ -525,40 +1210,41 @@ function PageHeader({ name }) {
   );
 }
 
-/* --------------------------------- App ----------------------------------- */
 export default function AdminApp() {
   const [page, setPage] = useState("Get Started");
   const PageComp = PAGES[page];
 
+  useEffect(() => {
+    console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL);
+    supabase.from("inventory").select("id", { head: true, count: "exact" })
+      .then(({ error, count }) => {
+        if (error) console.log("Test select result:", error.message);
+        else console.log("Test select OK. Row count:", count);
+      });
+  }, []);
+
   return (
     <div className="min-h-screen grid grid-cols-12 bg-slate-50">
-      {/* Sidebar */}
       <aside className="col-span-12 md:col-span-2 xl:col-span-2 bg-white border-r border-slate-200 p-3 flex flex-col">
         <div className="flex items-center gap-2 px-2 py-3">
-          <Layers size={22} className="text-[#2f6b8f]" />
+          <img
+            src={logoUrl}
+            alt="Reseller Admin logo"
+            className="h-7 w-7 squared"
+            draggable="false"
+          />
           <div className="leading-tight">
-            <div className="font-semibold">Reseller Admin</div>
-            <div className="text-xs text-slate-500">All features unlocked</div>
+            <div className="font-semibold">Reseller Portal</div>
           </div>
         </div>
         <nav className="mt-3 space-y-1">
-          {Object.keys(PAGES).map((name) => (
-            <NavButton
-              key={name}
-              icon={iconFor(name)}
-              label={name}
-              active={page === name}
-              onClick={() => setPage(name)}
-            />
-          ))}
+          {Object.keys(PAGES).map((name) => {
+            const Icon = iconFor(name);
+            return <NavButton key={name} icon={Icon} label={name} active={page === name} onClick={() => setPage(name)} />;
+          })}
         </nav>
-        <div className="mt-auto pt-4">
-          <div className="w-full text-center rounded-xl bg-green-600 text-white py-2">All features unlocked</div>
-          <div className="mt-2 text-xs text-slate-500">No plan limits. Full access enabled.</div>
-        </div>
       </aside>
 
-      {/* Main */}
       <main className="col-span-12 md:col-span-10 xl:col-span-10">
         <TopBar />
         <div className="px-4 pb-10">
