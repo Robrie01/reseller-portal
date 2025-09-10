@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
+import { signInWithGoogle } from "./lib/auth";
+
+<button onClick={() => signInWithGoogle()}>Continue with Google</button>
+
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
