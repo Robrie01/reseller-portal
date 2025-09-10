@@ -12,6 +12,8 @@ import { addExpense, mapGLAccount } from "./db/expenses";
 import { addSale } from "./db/sales";
 import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
+import { useAuth } from "./lib/auth";
+
 
 // ---------- tiny helpers ----------
 const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
@@ -143,15 +145,14 @@ const Card = ({ title, children, right }) => (
 );
 
 // ---------- top bar ----------
+// ---------- top bar ----------
 const TopBar = () => {
   const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState("");
   const btnRef = useRef(null);
   const menuRef = useRef(null);
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEmail(data?.user?.email || ""));
-  }, []);
+  // 🔐 Live auth state from our provider
+  const { user, loading } = useAuth();
 
   useEffect(() => {
     function onClick(e) {
@@ -165,8 +166,9 @@ const TopBar = () => {
   }, [open]);
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
-    window.location.reload();
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("Error signing out:", error.message);
+    // No reload needed — AuthProvider will re-render UI on sign-out
   }
 
   return (
@@ -185,17 +187,43 @@ const TopBar = () => {
       </button>
 
       {open && (
-        <div ref={menuRef} role="menu" className="absolute right-3 top-14 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
-          <div className="px-3 py-2 text-sm text-slate-500 border-b truncate">{email || "Signed in"}</div>
-          <button className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setOpen(false); alert("Profile coming soon"); }} role="menuitem">Profile</button>
-          <button className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600" onClick={handleSignOut} role="menuitem">
-            <LogOut size={16} /> Sign out
-          </button>
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-3 top-14 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden"
+        >
+          <div className="px-3 py-2 text-sm text-slate-500 border-b truncate">
+            {loading ? "Loading…" : (user?.email || "Not signed in")}
+          </div>
+
+          {user ? (
+            <>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                onClick={() => { setOpen(false); alert("Profile coming soon"); }}
+                role="menuitem"
+              >
+                Profile
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
+                onClick={handleSignOut}
+                role="menuitem"
+              >
+                <LogOut size={16} /> Sign out
+              </button>
+            </>
+          ) : (
+            <div className="px-3 py-2 text-sm text-slate-600">
+              Not signed in
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 };
+
 
 // ---------- pages ----------
 function GetStarted() {
