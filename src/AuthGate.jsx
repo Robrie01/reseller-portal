@@ -1,7 +1,6 @@
 // src/AuthGate.jsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
-import { signInWithGoogle } from "./lib/auth";
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
@@ -82,8 +81,18 @@ function GoogleButton() {
   async function handleGoogle() {
     try {
       setBusy(true);
-      await signInWithGoogle();
-      // Supabase will redirect and then onAuthStateChange will handle session
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin, // send back to your site
+          skipBrowserRedirect: true,          // get the URL instead of auto-redirecting
+        },
+      });
+      if (error) throw error;
+
+      // Should start with https://accounts.google.com/...
+      console.log("Supabase OAuth URL:", data?.url);
+      window.location.assign(data.url);
     } catch (e) {
       alert(e?.message || "Google sign-in failed");
       setBusy(false);
@@ -92,16 +101,29 @@ function GoogleButton() {
 
   return (
     <button
+      type="button"
       onClick={handleGoogle}
       disabled={busy}
       className="w-full border border-slate-300 rounded-xl px-3 py-2 flex items-center justify-center gap-2 hover:bg-slate-50 disabled:opacity-60"
     >
       {/* Simple G icon */}
       <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-        <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.6 29.3 36 24 36c-6.6 0-12-5.4-12-12S17.4 12 24 12c3 0 5.7 1.1 7.8 3l5.7-5.7C33.9 6.1 29.2 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c10 0 18.4-7.3 19.9-16.8.1-.7.1-1.4.1-2.1 0-1.2-.1-2.3-.4-3.6z"/>
-        <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.8 16 19 14 24 14c3 0 5.7 1.1 7.8 3l5.7-5.7C33.9 6.1 29.2 4 24 4 16.1 4 9.2 8.5 6.3 14.7z"/>
-        <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.5-5.2l-6.2-5.1C29.2 35.9 26.7 37 24 37c-5.2 0-9.6-3.4-11.3-8l-6.6 5.1C9.1 39.5 16 44 24 44z"/>
-        <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.4 4.6-5.8 8-11.3 8-5 0-9.2-3.2-10.7-7.6l-6.6 5.1C9.1 39.5 16 44 24 44c10 0 18.4-7.3 19.9-16.8.1-.7.1-1.4.1-2.1 0-1.2-.1-2.3-.4-3.6z"/>
+        <path
+          fill="#FFC107"
+          d="M43.6 20.5H42V20H24v8h11.3C33.9 32.6 29.3 36 24 36c-6.6 0-12-5.4-12-12S17.4 12 24 12c3 0 5.7 1.1 7.8 3l5.7-5.7C33.9 6.1 29.2 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c10 0 18.4-7.3 19.9-16.8.1-.7.1-1.4.1-2.1 0-1.2-.1-2.3-.4-3.6z"
+        />
+        <path
+          fill="#FF3D00"
+          d="M6.3 14.7l6.6 4.8C14.8 16 19 14 24 14c3 0 5.7 1.1 7.8 3l5.7-5.7C33.9 6.1 29.2 4 24 4 16.1 4 9.2 8.5 6.3 14.7z"
+        />
+        <path
+          fill="#4CAF50"
+          d="M24 44c5.2 0 10-2 13.5-5.2l-6.2-5.1C29.2 35.9 26.7 37 24 37c-5.2 0-9.6-3.4-11.3-8l-6.6 5.1C9.1 39.5 16 44 24 44z"
+        />
+        <path
+          fill="#1976D2"
+          d="M43.6 20.5H42V20H24v8h11.3c-1.4 4.6-5.8 8-11.3 8-5 0-9.2-3.2-10.7-7.6l-6.6 5.1C9.1 39.5 16 44 24 44c10 0 18.4-7.3 19.9-16.8.1-.7.1-1.4.1-2.1 0-1.2-.1-2.3-.4-3.6z"
+        />
       </svg>
       <span>{busy ? "Opening Google…" : "Continue with Google"}</span>
     </button>
