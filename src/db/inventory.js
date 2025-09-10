@@ -8,13 +8,7 @@ function toISODate(input) {
   return isNaN(d) ? null : d.toISOString().slice(0, 10);
 }
 
-const platformMap = {
-  ebay: "ebay",
-  etsy: "etsy",
-  vinted: "vinted",
-  none: "none",
-};
-
+const platformMap = { ebay: "ebay", etsy: "etsy", vinted: "vinted", none: "none" };
 function normalizePlatform(v) {
   const s = String(v || "").toLowerCase();
   return platformMap[s] || "none";
@@ -48,18 +42,17 @@ export async function addInventoryFull(v) {
     vendor: v.vendor || null,
     department: v.department || null,
     category: v.category || null,
-    sub_category: v.subcategory || null,     // DB column is sub_category
+    sub_category: v.subcategory || null,
     brand: v.brand || null,
     location: v.location || null,
     sku: v.sku || null,
-    platforms_listed: normalizePlatform(v.platform), // DB column
+    platforms_listed: normalizePlatform(v.platform),
     purchase_date: toISODate(v.purchase_date),
     purchase_price: v.purchase_price ? Number(v.purchase_price) : null,
     quantity_on_hand: v.quantity ? Number(v.quantity) : 1,
     notes: v.notes || null,
   };
 
-  // Insert first (get id back)
   const { data: inserted, error: insErr } = await supabase
     .from("inventory")
     .insert(row)
@@ -67,14 +60,13 @@ export async function addInventoryFull(v) {
     .single();
   if (insErr) throw insErr;
 
-  // Optional receipt upload
   if (v.receiptFile) {
     try {
-      const path = await uploadReceipt(v.receiptFile, "inventory");
+      const path = await uploadReceipt("inventory", inserted.id, v.receiptFile);
       await supabase.from("inventory").update({ receipt_path: path }).eq("id", inserted.id);
       inserted.receipt_path = path;
     } catch (e) {
-      console.warn("Inventory receipt upload failed:", e.message);
+      console.warn("Inventory receipt upload failed:", e?.message || e);
     }
   }
 

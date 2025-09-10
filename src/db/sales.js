@@ -52,11 +52,11 @@ export async function addSale(values) {
 
   if (values.receiptFile) {
     try {
-      const path = await uploadReceipt(values.receiptFile, "sales");
+      const path = await uploadReceipt("sales", sale.id, values.receiptFile);
       await supabase.from("sales").update({ receipt_path: path }).eq("id", sale.id);
       sale.receipt_path = path;
     } catch (e) {
-      console.warn("Sales receipt upload failed:", e.message);
+      console.warn("Sales receipt upload failed:", e?.message || e);
     }
   }
 

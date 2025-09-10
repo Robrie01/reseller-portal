@@ -13,7 +13,6 @@ import { addSale } from "./db/sales";
 import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 
-
 // ---------- tiny helpers ----------
 const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
 const labelCls = "text-sm text-slate-600";
@@ -31,7 +30,7 @@ const IconBtn = ({ className = "", ...rest }) => (
 // Display as dd-mm-yyyy
 const fmtDate = (s) => {
   if (!s) return "";
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); // 2025-09-01 or 2025-09-01T...
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
   const d = new Date(s);
   if (!isNaN(d)) {
@@ -43,9 +42,10 @@ const fmtDate = (s) => {
   return String(s);
 };
 
-/** Robust receipt opener using the centralized storage helper. */
+/** Open a receipt stored in Supabase Storage */
 async function openReceipt(path) {
   try {
+    if (path && typeof path === "object" && path.path) path = path.path; // tolerate legacy shape
     if (!path) return alert("No receipt attached.");
     if (/^https?:\/\//i.test(path)) {
       window.open(path, "_blank", "noopener,noreferrer");
@@ -767,7 +767,6 @@ function AddInventory() {
 
 // ---------- Add Expense ----------
 function AddExpense() {
-  // ---- state / paging ----
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -776,18 +775,15 @@ function AddExpense() {
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState({});
 
-  // ---- dropdown data (GL + Vendors) ----
   const DEFAULT_GL = ["Postage", "Packaging", "Software and apps", "Advertising", "Other"];
   const [glOpts, setGlOpts] = useState(DEFAULT_GL);
   const [vendors, setVendors] = useState(["No vendor", "Amazon", "eBay"]);
 
-  // ---- linked sale quick-search ----
   const [saleList, setSaleList] = useState([]);
   const [saleQuery, setSaleQuery] = useState("");
   const [showSaleSug, setShowSaleSug] = useState(false);
   const saleSugRef = useRef(null);
 
-  // ------- load data -------
   async function load() {
     setLoading(true);
     const { data } = await supabase
@@ -817,7 +813,6 @@ function AddExpense() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [showSaleSug]);
 
-  // ------- table actions -------
   async function handleDelete(row) {
     if (!confirm("Delete this expense?")) return;
     const { error } = await supabase.from("expenses").delete().eq("id", row.id);
@@ -844,7 +839,6 @@ function AddExpense() {
     cancelEdit();
   }
 
-  // ------- form helpers -------
   const get = (id) => document.getElementById(id);
   function clearForm() {
     get("exp-ledger").value = "";
@@ -862,12 +856,10 @@ function AddExpense() {
   async function save(closeAfter) {
     try {
       setSaving(true);
-
-      // read the user-facing label and let addExpense map it via mapGLAccount
       const glLabel = get("exp-gl-label").value || get("exp-ledger").value;
 
       const values = {
-        gl_account_label: glLabel,        // <- pass label; db/expenses will map it
+        gl_account_label: glLabel,
         vendor: get("exp-vendor").value,
         description: get("exp-desc").value,
         amount: get("exp-amount").value,
@@ -890,7 +882,6 @@ function AddExpense() {
     }
   }
 
-  // ------- UI -------
   return (
     <div className="space-y-4">
       <Card title="Add Expense" right={
@@ -1116,7 +1107,6 @@ function AddExpense() {
     </div>
   );
 }
-
 
 // ---------- Reports ----------
 function Reports() {
