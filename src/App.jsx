@@ -14,7 +14,6 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 
-
 // ---------- tiny helpers ----------
 const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
 const labelCls = "text-sm text-slate-600";
@@ -145,7 +144,6 @@ const Card = ({ title, children, right }) => (
 );
 
 // ---------- top bar ----------
-// ---------- top bar ----------
 const TopBar = () => {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
@@ -168,7 +166,6 @@ const TopBar = () => {
   async function handleSignOut() {
     const { error } = await supabase.auth.signOut();
     if (error) console.error("Error signing out:", error.message);
-    // No reload needed — AuthProvider will re-render UI on sign-out
   }
 
   return (
@@ -223,7 +220,6 @@ const TopBar = () => {
     </div>
   );
 };
-
 
 // ---------- pages ----------
 function GetStarted() {
@@ -331,25 +327,26 @@ const Pager = ({ page, setPage, totalPages }) => (
   </div>
 );
 
+/** ---------- Transaction Details (unified feed) ---------- */
 function TransactionDetails() {
-  // (keeps your original tabs exactly as-is)
+  // your original tabs
   const [tab, setTab] = useState("Inventory");
   const tabs = ["Inventory", "Sales", "Refunds", "Expenses"];
 
-  // NEW: lightweight fetch state (non-breaking)
+  // fetch state
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // helper: YYYY-MM-DD range for the current year
+  // YYYY-MM-DD range for the current year
   function currentYearRange() {
     const now = new Date();
     const start = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
-    const end   = new Date(now.getFullYear(), 11, 31).toISOString().slice(0, 10);
+    const end = new Date(now.getFullYear(), 11, 31).toISOString().slice(0, 10);
     return { start, end };
   }
 
-  // NEW: fetch unified transactions (doesn't affect your existing features)
+  // load unified transactions once (current year)
   useEffect(() => {
     const { start, end } = currentYearRange();
 
@@ -359,14 +356,11 @@ function TransactionDetails() {
         setErr("");
         const { data, error } = await supabase
           .from("transactions_feed")
-          .select(
-            "id, source_table, txn_type, txn_date, amount, description, vendor, bank_account, platform, gl_account, related_id, created_at"
-          )
+          .select("id, source_table, txn_type, txn_date, amount, description, vendor, bank_account, platform, gl_account, related_id, created_at")
           .gte("txn_date", start)
           .lte("txn_date", end)
           .order("txn_date", { ascending: false })
           .limit(1000);
-
         if (error) throw error;
         setRows(data || []);
       } catch (e) {
@@ -379,20 +373,32 @@ function TransactionDetails() {
     load();
   }, []);
 
+  // map UI tab -> transaction kind in the feed
+  const tabToKind = {
+    Inventory: "inventory",
+    Sales: "sale",
+    Refunds: "refund",
+    Expenses: "expense",
+  };
+
+  // filter by current tab
+  const displayRows = useMemo(() => {
+    const k = tabToKind[tab];
+    if (!k) return rows;
+    return rows.filter((r) => r.txn_type === k);
+  }, [rows, tab]);
+
   useMemo(() => null, []); // keep your original no-op
 
   return (
     <div className="space-y-4">
+      {/* Tabs */}
       <div className="flex items-center gap-2">
         {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-3 py-2 rounded-xl border ${
-              tab === t
-                ? "bg-[#1f4e6b] text-white border-[#1f4e6b]"
-                : "bg-white text-slate-800 border-slate-200"
-            }`}
+            className={`px-3 py-2 rounded-xl border ${tab === t ? "bg-[#1f4e6b] text-white border-[#1f4e6b]" : "bg-white text-slate-800 border-slate-200"}`}
           >
             {t}
           </button>
@@ -400,6 +406,7 @@ function TransactionDetails() {
       </div>
 
       <Card title={`${tab} Detail`}>
+        {/* Top row of actions (stub) */}
         <div className="flex flex-wrap gap-2 mb-3">
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Filters</button>
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Columns</button>
@@ -407,31 +414,58 @@ function TransactionDetails() {
           <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Export</button>
         </div>
 
-        {/* NEW: tiny, non-invasive debug preview so we know the feed is working */}
-        <div className="mb-4">
-          {loading && <div>Loading transactions…</div>}
-          {err && <div className="text-red-600">{err}</div>}
-          {!loading && !err && (
-            <>
-              <div className="text-sm text-slate-600 mb-2">
-                Loaded {rows.length} transaction(s) for current year
-              </div>
-              <pre className="text-xs bg-slate-50 border rounded p-3 overflow-auto max-h-64">
-                {JSON.stringify(rows.slice(0, 5), null, 2)}
-              </pre>
-            </>
-          )}
-        </div>
+        {/* Data state */}
+        {loading && <div>Loading transactions…</div>}
+        {err && <div className="text-red-600">{err}</div>}
 
-        {/* your original placeholder remains */}
-        <div className="overflow-auto border border-slate-200 rounded-2xl p-6 text-slate-500">
-          Choose a view to see details.
-        </div>
+        {!loading && !err && (
+          <>
+            <div className="text-sm text-slate-600 mb-2">
+              Loaded {rows.length} transaction(s) for current year{tab ? ` — showing ${displayRows.length} in "${tab}"` : ""}
+            </div>
+
+            {displayRows.length === 0 ? (
+              <div className="text-slate-500">No transactions for the selected filters.</div>
+            ) : (
+              <div className="overflow-auto rounded-2xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Type</th>
+                      <th className="px-3 py-2 text-left">Source</th>
+                      <th className="px-3 py-2 text-left">Description</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-left">Vendor</th>
+                      <th className="px-3 py-2 text-left">Platform</th>
+                      <th className="px-3 py-2 text-left">GL</th>
+                      <th className="px-3 py-2 text-left">Bank</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-800">
+                    {displayRows.map((r) => (
+                      <tr key={r.id}>
+                        <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.txn_date)}</td>
+                        <td className="px-3 py-2">{r.txn_type || "-"}</td>
+                        <td className="px-3 py-2">{r.source_table || "-"}</td>
+                        <td className="px-3 py-2">{r.description || "-"}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(r.amount)}</td>
+                        <td className="px-3 py-2">{r.vendor || "-"}</td>
+                        <td className="px-3 py-2">{r.platform ?? "-"}</td>
+                        <td className="px-3 py-2">{r.gl_account ?? "-"}</td>
+                        <td className="px-3 py-2">{r.bank_account || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
       </Card>
     </div>
   );
 }
-
 
 // ---------- Report Sale ----------
 function ReportSale() {
@@ -1332,6 +1366,25 @@ export default function AdminApp() {
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+/** ---- Modal (kept at bottom to avoid scroll noise) ---- */
+function Modal({ open, onClose, title, children, footer }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h3 className="font-semibold text-slate-800">{title}</h3>
+          <button onClick={onClose} className="px-2 py-1 rounded hover:bg-slate-100">Close</button>
+        </div>
+        <div className="p-4">{children}</div>
+        <div className="border-t px-4 py-3 flex items-center justify-end gap-2">
+          {footer ? footer : (<><Button className="bg-slate-100" onClick={onClose}>Add and Next</Button><Button className="bg-[#2f6b8f] text-white" onClick={onClose}>Add</Button></>)}
+        </div>
+      </div>
     </div>
   );
 }
