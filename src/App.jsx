@@ -62,6 +62,7 @@ async function openReceipt(path) {
   }
 }
 
+// simple CSV download
 function dl(filename, text) {
   const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -718,7 +719,7 @@ function TransactionDetails() {
                         key={c.id}
                         label={c.label}
                         sortKey={c.key}
-                        activeKey={c.key === sortKey ? sortKey : sortKey}
+                        activeKey={sortKey}
                         dir={dir}
                         onSort={onSort}
                       />
