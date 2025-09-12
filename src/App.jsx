@@ -1757,8 +1757,20 @@ function AddRebateRefund() {
   const [openRebate, setOpenRebate] = useState(false);
   const [openRefund, setOpenRefund] = useState(false);
   const [rows, setRows] = useState([]); // unified list
+  // NEW: sales + selected sale (with inventory metadata if we can find it)
+  const [sales, setSales] = useState([]);
+  const [selectedSale, setSelectedSale] = useState(null);
   const [loading, setLoading] = useState(false);
   const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } = useSortPage(rows);
+
+  function ROField({ label, value }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{value ?? "-"}</div>
+    </div>
+  );
+}
 
   useEffect(() => { resetPage(); }, [sortKey, dir, rows]);
 
@@ -1797,7 +1809,41 @@ function AddRebateRefund() {
       setLoading(false);
     }
   }
+  // Load user sales + try to attach inventory metadata by matching title
+  async function loadSales() {
+    const [{ data: salesRows = [] }, { data: invRows = [] }] = await Promise.all([
+      supabase.from("sales").select("id,item_sold,sale_price,platform,sale_date,purchase_price,created_at").order("sale_date", { ascending: false }),
+      supabase.from("inventory").select("id,title,purchase_date,purchase_price,vendor,created_at").order("purchase_date", { ascending: false }),
+    ]);
+    // quick lookup: latest inventory row by lowercase title (<= sale_date if possible)
+    const byTitle = new Map();
+    for (const inv of invRows) {
+      const key = (inv.title || "").toLowerCase().trim();
+      if (!byTitle.has(key)) byTitle.set(key, []);
+      byTitle.get(key).push(inv);
+    }
+    for (const arr of byTitle.values()) arr.sort((a,b) => new Date(b.purchase_date||b.created_at) - new Date(a.purchase_date||a.created_at));
+
+    const hydrated = salesRows.map(s => {
+      const key = (s.item_sold || "").toLowerCase().trim();
+      let inv = null;
+      const choices = byTitle.get(key) || [];
+      if (choices.length) {
+        // pick first inventory row with purchase_date <= sale_date, else the latest
+        inv = choices.find(c => (c.purchase_date && s.sale_date && new Date(c.purchase_date) <= new Date(s.sale_date))) || choices[0];
+      }
+     return {
+        ...s,
+        _inv_vendor: inv?.vendor || null,
+        _inv_purchase_date: inv?.purchase_date || null,
+        _inv_purchase_price: inv?.purchase_price ?? null,
+      };
+    });
+    setSales(hydrated);
+  }
+
   useEffect(() => { load(); }, []);
+  useEffect(() => { loadSales(); }, []);
 
   async function deleteRow(row) {
     if (!confirm(`Delete this ${row.type}?`)) return;
@@ -1805,6 +1851,15 @@ function AddRebateRefund() {
     const { error } = await supabase.from(table).delete().eq("id", row.id);
     if (error) return alert(error.message);
     setRows((r) => r.filter(x => x.id !== row.id));
+  }
+
+  function handleSaleChange(e) {
+    const id = e.target.value || null;
+    const sale = sales.find(s => s.id === id) || null;
+    setSelectedSale(sale);
+    // Pre-fill refund amount with sale price if present
+    const amt = document.getElementById("refund-amount");
+    if (sale && amt && !amt.value) amt.value = sale.sale_price ?? "";
   }
 
   // -- Add Rebate form handlers
@@ -1831,10 +1886,10 @@ function AddRebateRefund() {
   async function saveRefund(closeAfter) {
     const get = (id) => document.getElementById(id);
     const values = {
-      item: get("refund-item").value,
+      item: selectedSale?.item_sold || get("refund-item").value,
       amount: Number(get("refund-amount").value || 0),
       refund_date: get("refund-date").value,
-      sale_id: null, // could wire up a picker later
+      sale_id: selectedSale?.id || null,
     };
     if (!values.amount || !values.refund_date) return alert("Amount and Date are required.");
     const { data: { session } } = await supabase.auth.getSession();
@@ -1843,7 +1898,7 @@ function AddRebateRefund() {
     if (error) return alert(error.message);
     await load();
     if (closeAfter) setOpenRefund(false);
-    else { get("refund-item").value = ""; get("refund-amount").value = ""; }
+    else { setSelectedSale(null); get("refund-item").value = ""; get("refund-amount").value = ""; }
   }
 
   return (
@@ -1941,10 +1996,36 @@ function AddRebateRefund() {
         }
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TextField label="Item / Reason" id="refund-item" />
+          {/* SALE PICKER */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-slate-700 mb-1">Sale (item / reason)</label>
+            <select id="refund-sale" onChange={handleSaleChange} value={selectedSale?.id || ""} className="w-full rounded-xl border border-slate-300 px-3 py-2">
+              <option value="">— Select a sale —</option>
+              {sales.map(s => (
+                <option key={s.id} value={s.id}>
+                  {`${s.item_sold || "(item)"} • ${fmtDate(s.sale_date)} • ${fmtMoney(s.sale_price)} • ${s.platform || "-"}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Editable core fields */}
           <TextField label="Amount (£)" id="refund-amount" prefix="£" type="number" />
           <DateField label="Refund Date" id="refund-date" />
+
+          {/* Fallback free text if you want to override item/notes */}
+          <TextField label="Item / Reason (optional override)" id="refund-item" placeholder={selectedSale?.item_sold || ""} />
           <TextArea label="Notes (optional)" id="refund-notes" className="md:col-span-2" />
+
+          {/* Auto details (read-only) */}
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+            <ROField label="Date Sold" value={selectedSale?.sale_date ? fmtDate(selectedSale.sale_date) : "-"} />
+            <ROField label="Sale Price" value={selectedSale?.sale_price != null ? fmtMoney(selectedSale.sale_price) : "-"} />
+            <ROField label="Platform" value={selectedSale?.platform || "-"} />
+            <ROField label="Vendor (bought from)" value={selectedSale?._inv_vendor || "-"} />
+            <ROField label="Purchase Date" value={selectedSale?._inv_purchase_date ? fmtDate(selectedSale._inv_purchase_date) : "-"} />
+            <ROField label="Purchase Price" value={selectedSale?._inv_purchase_price != null ? fmtMoney(selectedSale._inv_purchase_price) : "-"} />
+          </div>
         </div>
       </Modal>
     </div>
