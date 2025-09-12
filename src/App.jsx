@@ -247,18 +247,42 @@ function GetStarted() {
   );
 }
 
+/** UPDATED: live chart + stats from transactions_feed */
 function Dashboard() {
-  const data = useMemo(() => [
-    { m: "1/2025", income: 0, expenses: 0 },
-    { m: "2/2025", income: 0, expenses: 0 },
-    { m: "3/2025", income: 0, expenses: 0 },
-    { m: "4/2025", income: 0, expenses: 0 },
-    { m: "5/2025", income: 0, expenses: 0 },
-    { m: "6/2025", income: 0, expenses: 0 },
-    { m: "7/2025", income: 0, expenses: 0 },
-    { m: "8/2025", income: 0, expenses: 0 },
-    { m: "9/2025", income: 0, expenses: 0 },
-  ], []);
+  const [series, setSeries] = useState([]);
+
+  useEffect(() => {
+    const y = new Date().getFullYear();
+    const start = `${y}-01-01`;
+    const end = new Date().toISOString().slice(0, 10);
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("transactions_feed")
+        .select("txn_date, txn_type, amount")
+        .gte("txn_date", start)
+        .lte("txn_date", end)
+        .limit(10000);
+      if (error) { console.error(error); return; }
+
+      const buckets = {};
+      for (const r of (data || [])) {
+        const d = new Date(r.txn_date);
+        if (isNaN(d)) continue;
+        const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
+        if (!buckets[key]) buckets[key] = { m: key, income: 0, expenses: 0 };
+        if (r.txn_type === "sale") buckets[key].income += Number(r.amount || 0);
+        if (r.txn_type === "expense") buckets[key].expenses += Number(r.amount || 0);
+      }
+
+      const arr = Array.from({ length: 12 }, (_, i) => {
+        const k = `${y}/${i + 1}`;
+        return { m: `${i + 1}/${y}`, income: buckets[k]?.income || 0, expenses: buckets[k]?.expenses || 0 };
+      });
+
+      setSeries(arr);
+    })();
+  }, []);
 
   const Stat = ({ label, value }) => (
     <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -267,19 +291,27 @@ function Dashboard() {
     </div>
   );
 
+  const totals = series.reduce((acc, r) => ({
+    income: acc.income + r.income,
+    expenses: acc.expenses + r.expenses,
+  }), { income: 0, expenses: 0 });
+
+  const profit = totals.income - totals.expenses;
+  const margin = totals.income ? (profit / totals.income) * 100 : 0;
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Stat label="Income" value="£0.00" />
-        <Stat label="Expenses" value="£0.00" />
-        <Stat label="Profit (£)" value="£0.00" />
-        <Stat label="Profit (%)" value="0.00%" />
+        <Stat label="Income" value={`£${totals.income.toFixed(2)}`} />
+        <Stat label="Expenses" value={`£${totals.expenses.toFixed(2)}`} />
+        <Stat label="Profit (£)" value={`£${profit.toFixed(2)}`} />
+        <Stat label="Profit (%)" value={`${margin.toFixed(2)}%`} />
       </div>
 
       <Card title="Profitability">
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ left: 12, right: 12 }}>
+            <LineChart data={series} margin={{ left: 12, right: 12 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="m" />
               <YAxis />
@@ -369,6 +401,19 @@ function TransactionDetails() {
   const densityOptions = { compact: "px-3 py-1", cozy: "px-3 py-2", comfortable: "px-3 py-3" };
   const [density, setDensity] = useState("cozy");
 
+  // restore saved density (NEW)
+  useEffect(() => {
+    try {
+      const d = localStorage.getItem("txn_table_density");
+      if (d && densityOptions[d]) setDensity(d);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // persist density (NEW)
+  useEffect(() => {
+    try { localStorage.setItem("txn_table_density", density); } catch {}
+  }, [density]);
+
   // columns
   const ALL_COLUMNS = [
     { id: "date", label: "Date", key: "txn_date" },
@@ -380,6 +425,8 @@ function TransactionDetails() {
     { id: "platform", label: "Platform", key: "platform" },
     { id: "gl", label: "GL", key: "gl_account" },
     { id: "bank", label: "Bank", key: "bank_account" },
+    // NEW: actions column
+    { id: "actions", label: "Actions", key: "__actions__" },
   ];
   const defaultCols = ALL_COLUMNS.reduce((acc, c) => (acc[c.id] = true, acc), {});
   const [visibleCols, setVisibleCols] = useState(() => {
@@ -519,9 +566,51 @@ function TransactionDetails() {
   // density pad
   const cellPad = densityOptions[density] || densityOptions.cozy;
 
+  // --- NEW: inline edit/delete that writes back to the real table ---
+  async function refreshRange() {
+    try {
+      const { data } = await supabase
+        .from("transactions_feed")
+        .select("id, source_table, txn_type, txn_date, amount, description, vendor, bank_account, platform, gl_account, related_id, created_at")
+        .gte("txn_date", start)
+        .lte("txn_date", end)
+        .order("txn_date", { ascending: false })
+        .limit(5000);
+      setRows(data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleDeleteTx(row) {
+    if (!confirm("Delete this record?")) return;
+    const table = row.source_table;
+    const idToUse = row.related_id || row.id;
+    const { error } = await supabase.from(table).delete().eq("id", idToUse);
+    if (error) return alert(error.message);
+    await refreshRange();
+  }
+
+  async function handleEditTx(row) {
+    const nextDesc = prompt("Update description:", row.description || "");
+    if (nextDesc == null) return;
+    const nextAmtStr = prompt("Update amount (number):", String(row.amount ?? 0));
+    if (nextAmtStr == null) return;
+    const nextAmt = Number(nextAmtStr);
+    const table = row.source_table;
+    const idToUse = row.related_id || row.id;
+    const { error } = await supabase.from(table).update({
+      description: nextDesc,
+      amount: nextAmt,
+    }).eq("id", idToUse);
+    if (error) return alert(error.message);
+    // soft update in the visible list
+    setRows((arr) => arr.map(r => r.id === row.id ? { ...r, description: nextDesc, amount: nextAmt } : r));
+  }
+
   // export CSV of filteredRows (respect visible columns)
   function exportCSV() {
-    const cols = ALL_COLUMNS.filter((c) => visibleCols[c.id]);
+    const cols = ALL_COLUMNS.filter((c) => visibleCols[c.id] && c.id !== "actions");
     const head = cols.map((c) => c.label);
     const esc = (val) => {
       if (val == null) return "";
@@ -538,8 +627,12 @@ function TransactionDetails() {
       if (c.id === "amount") v = Number(r.amount || 0).toFixed(2);
       return esc(v ?? "");
     }).join(","));
+    const suffix = [
+      tab !== "All" ? tab.toLowerCase() : null,
+      platformFilter ? `platform_${platformFilter}` : null
+    ].filter(Boolean).join("_");
     const csv = [head.join(","), ...rowsCsv].join("\n");
-    const fname = `transactions_${start}_to_${end}${tab !== "All" ? `_${tab.toLowerCase()}` : ""}.csv`;
+    const fname = `transactions_${start}_to_${end}${suffix ? `_${suffix}` : ""}.csv`;
     dl(fname, csv);
   }
 
@@ -739,6 +832,14 @@ function TransactionDetails() {
                     {visibleCols.platform && <td className={cellPad}>{r.platform ?? "-"}</td>}
                     {visibleCols.gl && <td className={cellPad}>{r.gl_account ?? "-"}</td>}
                     {visibleCols.bank && <td className={cellPad}>{r.bank_account || "-"}</td>}
+                    {visibleCols.actions && (
+                      <td className={`${cellPad} whitespace-nowrap`}>
+                        <div className="flex gap-2">
+                          <IconBtn title="Edit" onClick={() => handleEditTx(r)}><Pencil size={16} /></IconBtn>
+                          <IconBtn title="Delete" onClick={() => handleDeleteTx(r)}><Trash2 size={16} /></IconBtn>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1524,8 +1625,22 @@ function Reports() {
     <div className="space-y-6">
       <Card title="Reseller Reports">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Select label="Report Type" id="rep-type" options={["Profit/Loss Statement","Inventory Report","Platform Transactions","Sales Tax Report","Schedule C Generator"]} />
-          <Select label="Period" id="rep-period" options={["Current day","Current week","Current month","Current year","Custom"]} />
+          <Select
+            label="Report Type"
+            id="rep-type"
+            options={[
+              "Profit/Loss Statement",
+              "Inventory Report",
+              "Platform Transactions",
+              "Sales Tax Report",
+              "Schedule C Generator",
+            ]}
+          />
+          <Select
+            label="Period"
+            id="rep-period"
+            options={["Current day", "Current week", "Current month", "Current year", "Custom"]}
+          />
           <DateField label="Start Date" id="rep-start" />
           <DateField label="End Date" id="rep-end" />
         </div>
@@ -1545,21 +1660,33 @@ function Integrations() {
         <IntegrationRow title="Mercari" platform="Mercari" beta />
       </Card>
       <Card title="Bank Integrations">
-        <p className="text-slate-600">Connect your bank or credit card here. Bank feeds are available on this workspace.</p>
+        <p className="text-slate-600">
+          Connect your bank or credit card here. Bank feeds are available on this workspace.
+        </p>
       </Card>
     </div>
   );
 }
+
 function IntegrationRow({ title, platform, beta }) {
   return (
     <div className="grid grid-cols-12 items-center gap-2 py-3 border-b last:border-0">
       <div className="col-span-3 font-medium">{title}</div>
       <div className="col-span-3 text-slate-600">Username</div>
-      <div className="col-span-2 text-slate-600">{platform}{beta ? "*" : ""}</div>
-      <div className="col-span-2"><Button className="border border-slate-200">Import</Button></div>
+      <div className="col-span-2 text-slate-600">
+        {platform}
+        {beta ? "*" : ""}
+      </div>
+      <div className="col-span-2">
+        <Button className="border border-slate-200">Import</Button>
+      </div>
       <div className="col-span-2 flex gap-2 justify-end">
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox"/> Daily Sales</label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox"/> Inventory</label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" /> Daily Sales
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" /> Inventory
+        </label>
       </div>
     </div>
   );
@@ -1579,20 +1706,29 @@ const PAGES = {
 
 function iconFor(name) {
   switch (name) {
-    case "Get Started": return Home;
-    case "Dashboards": return BarChart2;
-    case "Transaction Details": return Package;
-    case "Reseller Reports": return FileText;
-    case "Report Sale": return ShoppingCart;
-    case "Add Inventory": return Package;
-    case "Add Expense": return Receipt;
-    case "Integrations": return LinkIcon;
-    default: return Layers;
+    case "Get Started":
+      return Home;
+    case "Dashboards":
+      return BarChart2;
+    case "Transaction Details":
+      return Package;
+    case "Reseller Reports":
+      return FileText;
+    case "Report Sale":
+      return ShoppingCart;
+    case "Add Inventory":
+      return Package;
+    case "Add Expense":
+      return Receipt;
+    case "Integrations":
+      return LinkIcon;
+    default:
+      return Layers;
   }
 }
 
 function PageHeader({ name }) {
-  const quickRanges = ["Current day","Current week","Current month","Current year","Custom"];
+  const quickRanges = ["Current day", "Current week", "Current month", "Current year", "Custom"];
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="text-2xl font-semibold text-slate-800">{name}</div>
@@ -1603,7 +1739,14 @@ function PageHeader({ name }) {
           <option>By Category</option>
         </select>
         {quickRanges.map((r) => (
-          <button key={r} className={`px-3 py-2 rounded-xl text-sm border border-slate-200 ${r === "Current year" ? "bg-[#1f4e6b] text-white" : "bg-white"}`}>{r}</button>
+          <button
+            key={r}
+            className={`px-3 py-2 rounded-xl text-sm border border-slate-200 ${
+              r === "Current year" ? "bg-[#1f4e6b] text-white" : "bg-white"
+            }`}
+          >
+            {r}
+          </button>
         ))}
       </div>
     </div>
@@ -1616,7 +1759,9 @@ export default function AdminApp() {
 
   useEffect(() => {
     console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL);
-    supabase.from("inventory").select("id", { head: true, count: "exact" })
+    supabase
+      .from("inventory")
+      .select("id", { head: true, count: "exact" })
       .then(({ error, count }) => {
         if (error) console.log("Test select result:", error.message);
         else console.log("Test select OK. Row count:", count);
@@ -1627,12 +1772,7 @@ export default function AdminApp() {
     <div className="min-h-screen grid grid-cols-12 bg-slate-50">
       <aside className="col-span-12 md:col-span-2 xl:col-span-2 bg-white border-r border-slate-200 p-3 flex flex-col">
         <div className="flex items-center gap-2 px-2 py-3">
-          <img
-            src={logoUrl}
-            alt="Reseller Admin logo"
-            className="h-7 w-7 squared"
-            draggable="false"
-          />
+          <img src={logoUrl} alt="Reseller Admin logo" className="h-7 w-7 squared" draggable="false" />
           <div className="leading-tight">
             <div className="font-semibold">Reseller Portal</div>
           </div>
@@ -1640,7 +1780,9 @@ export default function AdminApp() {
         <nav className="mt-3 space-y-1">
           {Object.keys(PAGES).map((name) => {
             const Icon = iconFor(name);
-            return <NavButton key={name} icon={Icon} label={name} active={page === name} onClick={() => setPage(name)} />;
+            return (
+              <NavButton key={name} icon={Icon} label={name} active={page === name} onClick={() => setPage(name)} />
+            );
           })}
         </nav>
       </aside>
@@ -1666,11 +1808,24 @@ function Modal({ open, onClose, title, children, footer }) {
       <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h3 className="font-semibold text-slate-800">{title}</h3>
-          <button onClick={onClose} className="px-2 py-1 rounded hover:bg-slate-100">Close</button>
+          <button onClick={onClose} className="px-2 py-1 rounded hover:bg-slate-100">
+            Close
+          </button>
         </div>
         <div className="p-4">{children}</div>
         <div className="border-t px-4 py-3 flex items-center justify-end gap-2">
-          {footer ? footer : (<><Button className="bg-slate-100" onClick={onClose}>Add and Next</Button><Button className="bg-[#2f6b8f] text-white" onClick={onClose}>Add</Button></>)}
+          {footer ? (
+            footer
+          ) : (
+            <>
+              <Button className="bg-slate-100" onClick={onClose}>
+                Add and Next
+              </Button>
+              <Button className="bg-[#2f6b8f] text-white" onClick={onClose}>
+                Add
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </div>
