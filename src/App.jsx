@@ -252,115 +252,86 @@ function Dashboard() {
   const [series, setSeries] = useState([]);
 
   useEffect(() => {
-  const y = new Date().getFullYear();
-  const start = `${y}-01-01`;
-  const end = new Date().toISOString().slice(0, 10);
+    const y = new Date().getFullYear();
+    const start = `${y}-01-01`;
+    const end = new Date().toISOString().slice(0, 10);
 
-  (async () => {
-    try {
-      // Pull this year's five feeds (already filtered per-user by RLS)
-      const [salesRes, refundsRes, expensesRes, rebatesRes, inventoryRes] = await Promise.all([
-        supabase
-          .from("feed_sales")
-          .select("txn_date, amount")
-          .gte("txn_date", start)
-          .lte("txn_date", end)
-          .limit(10000),
-        supabase
-          .from("feed_refunds")
-          .select("txn_date, amount")
-          .gte("txn_date", start)
-          .lte("txn_date", end)
-          .limit(10000),
-        supabase
-          .from("feed_expenses")
-          .select("txn_date, amount")
-          .gte("txn_date", start)
-          .lte("txn_date", end)
-          .limit(10000),
-        supabase
-          .from("feed_rebates")
-          .select("txn_date, amount")
-          .gte("txn_date", start)
-          .lte("txn_date", end)
-          .limit(10000),
-        supabase
-          .from("feed_inventory_purchases")
-          .select("txn_date, amount")
-          .gte("txn_date", start)
-          .lte("txn_date", end)
-          .limit(10000),
-      ]);
+    (async () => {
+      try {
+        // Pull this year's five feeds (already filtered per-user by RLS)
+        const [salesRes, refundsRes, expensesRes, rebatesRes, inventoryRes] = await Promise.all([
+          supabase.from("feed_sales").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
+          supabase.from("feed_refunds").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
+          supabase.from("feed_expenses").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
+          supabase.from("feed_rebates").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
+          supabase.from("feed_inventory_purchases").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
+        ]);
 
-      const sales = salesRes.data || [];
-      const refunds = refundsRes.data || [];
-      const opEx = expensesRes.data || [];       // operating expenses (non-COGS)
-      const rebates = rebatesRes.data || [];     // supplier rebates (reduce op-ex)
-      const cogs = inventoryRes.data || [];      // inventory purchases (COGS)
+        const sales = salesRes.data || [];
+        const refunds = refundsRes.data || [];
+        const opEx = expensesRes.data || [];       // operating expenses (non-COGS)
+        const rebates = rebatesRes.data || [];     // supplier rebates (reduce op-ex)
+        const cogs = inventoryRes.data || [];      // inventory purchases (COGS)
 
-      // Bucket by month
-      const buckets = {};
-      const ensure = (d) => {
-        const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
-        if (!buckets[key]) buckets[key] = { m: key, income: 0, opEx: 0, cogs: 0 };
-        return buckets[key];
-      };
-
-      // Income = sales - refunds
-      for (const r of sales) {
-        const d = new Date(r.txn_date);
-        if (isNaN(d)) continue;
-        ensure(d).income += Number(r.amount || 0);
-      }
-      for (const r of refunds) {
-        const d = new Date(r.txn_date);
-        if (isNaN(d)) continue;
-        ensure(d).income -= Number(r.amount || 0);
-      }
-
-      // Operating expenses = expenses - rebates
-      for (const r of opEx) {
-        const d = new Date(r.txn_date);
-        if (isNaN(d)) continue;
-        ensure(d).opEx += Number(r.amount || 0);
-      }
-      for (const r of rebates) {
-        const d = new Date(r.txn_date);
-        if (isNaN(d)) continue;
-        ensure(d).opEx -= Number(r.amount || 0);
-      }
-
-      // COGS (inventory purchases)
-      for (const r of cogs) {
-        const d = new Date(r.txn_date);
-        if (isNaN(d)) continue;
-        ensure(d).cogs += Number(r.amount || 0);
-      }
-
-      // Build 12 months in order; keep your existing chart keys:
-      //   income  (sales - refunds)
-      //   expenses (opEx + cogs)   <-- for now your chart expects a single "expenses" line
-      const arr = Array.from({ length: 12 }, (_, i) => {
-        const k = `${y}/${i + 1}`;
-        const b = buckets[k] || { income: 0, opEx: 0, cogs: 0 };
-        return {
-          m: `${i + 1}/${y}`,
-          income: b.income,
-          opEx: b.opEx,
-          cogs: b.cogs,
-          // keep a single "expenses" field for your existing chart line
-          expenses: b.opEx + b.cogs,
+        // Bucket by month
+        const buckets = {};
+        const ensure = (d) => {
+          const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
+          if (!buckets[key]) buckets[key] = { m: key, income: 0, opEx: 0, cogs: 0 };
+          return buckets[key];
         };
-      });
 
-      setSeries(arr);
-    } catch (e) {
-      console.error(e);
-      setSeries([]);
-    }
-  })();
-}, []);
+        // Income = sales - refunds
+        for (const r of sales) {
+          const d = new Date(r.txn_date);
+          if (isNaN(d)) continue;
+          ensure(d).income += Number(r.amount || 0);
+        }
+        for (const r of refunds) {
+          const d = new Date(r.txn_date);
+          if (isNaN(d)) continue;
+          ensure(d).income -= Number(r.amount || 0);
+        }
 
+        // Operating expenses = expenses - rebates
+        for (const r of opEx) {
+          const d = new Date(r.txn_date);
+          if (isNaN(d)) continue;
+          ensure(d).opEx += Number(r.amount || 0);
+        }
+        for (const r of rebates) {
+          const d = new Date(r.txn_date);
+          if (isNaN(d)) continue;
+          ensure(d).opEx -= Number(r.amount || 0);
+        }
+
+        // COGS (inventory purchases)
+        for (const r of cogs) {
+          const d = new Date(r.txn_date);
+          if (isNaN(d)) continue;
+          ensure(d).cogs += Number(r.amount || 0);
+        }
+
+        // Build 12 months in order
+        const arr = Array.from({ length: 12 }, (_, i) => {
+          const k = `${y}/${i + 1}`;
+          const b = buckets[k] || { income: 0, opEx: 0, cogs: 0 };
+          return {
+            m: `${i + 1}/${y}`,
+            income: b.income,
+            opEx: b.opEx,
+            cogs: b.cogs,
+            expenses: b.opEx + b.cogs,
+          };
+        });
+
+        setSeries(arr);
+      } catch (e) {
+        console.error(e);
+        setSeries([]);
+      }
+    })();
+  }, []);
 
   const Stat = ({ label, value }) => (
     <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -376,7 +347,7 @@ function Dashboard() {
     return acc;
   }, { income: 0, opEx: 0, cogs: 0 });
     
-  const expensesTotal = totals.opEx + totals.cogs; // OpEx + COGS
+  const expensesTotal = totals.opEx + totals.cogs; 
   const profit = totals.income - expensesTotal;
   const margin = totals.income ? (profit / totals.income) * 100 : 0;
 
@@ -407,6 +378,7 @@ function Dashboard() {
     </div>
   );
 }
+
 
 const SortHeader = ({ label, sortKey, activeKey, dir, onSort }) => (
   <th className="px-3 py-2 text-left select-none cursor-pointer hover:underline" onClick={() => onSort(sortKey)} title="Click to sort">
