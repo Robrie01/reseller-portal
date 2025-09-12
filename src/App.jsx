@@ -15,7 +15,8 @@ import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 
 // ---------- tiny helpers ----------
-const baseInput = "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
+const baseInput =
+  "w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2f6b8f]";
 const labelCls = "text-sm text-slate-600";
 const fmtMoney = (n) => `£${Number(n || 0).toFixed(2)}`;
 
@@ -59,6 +60,19 @@ async function openReceipt(path) {
     console.error(e);
     alert("Could not open receipt: " + (e?.message || e));
   }
+}
+
+function dl(filename, text) {
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ---------- small inputs ----------
@@ -149,7 +163,6 @@ const TopBar = () => {
   const btnRef = useRef(null);
   const menuRef = useRef(null);
 
-  // 🔐 Live auth state from our provider
   const { user, loading } = useAuth();
 
   useEffect(() => {
@@ -329,27 +342,114 @@ const Pager = ({ page, setPage, totalPages }) => (
 
 /** ---------- Transaction Details (unified feed) ---------- */
 function TransactionDetails() {
-  // your original tabs
-  const [tab, setTab] = useState("Inventory");
-  const tabs = ["Inventory", "Sales", "Refunds", "Expenses"];
+  // tabs
+  const [tab, setTab] = useState("All");
+  const tabs = ["All", "Inventory", "Sales", "Refunds", "Expenses"];
 
-  // fetch state
+  // date ranges
+  const [preset, setPreset] = useState("Current year");
+  const [start, setStart] = useState(""); // YYYY-MM-DD
+  const [end, setEnd] = useState("");
+
+  // filters and table options
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [densityOpen, setDensityOpen] = useState(false);
+
+  const filtersRef = useRef(null);
+  const columnsRef = useRef(null);
+  const densityRef = useRef(null);
+
+  const [search, setSearch] = useState("");
+  const [platformFilter, setPlatformFilter] = useState("");
+  const [minAmt, setMinAmt] = useState("");
+  const [maxAmt, setMaxAmt] = useState("");
+
+  const densityOptions = { compact: "px-3 py-1", cozy: "px-3 py-2", comfortable: "px-3 py-3" };
+  const [density, setDensity] = useState("cozy");
+
+  // columns
+  const ALL_COLUMNS = [
+    { id: "date", label: "Date", key: "txn_date" },
+    { id: "type", label: "Type", key: "txn_type" },
+    { id: "source", label: "Source", key: "source_table" },
+    { id: "description", label: "Description", key: "description" },
+    { id: "amount", label: "Amount", key: "amount" },
+    { id: "vendor", label: "Vendor", key: "vendor" },
+    { id: "platform", label: "Platform", key: "platform" },
+    { id: "gl", label: "GL", key: "gl_account" },
+    { id: "bank", label: "Bank", key: "bank_account" },
+  ];
+  const defaultCols = ALL_COLUMNS.reduce((acc, c) => (acc[c.id] = true, acc), {});
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const raw = localStorage.getItem("txn_cols_visible");
+      return raw ? JSON.parse(raw) : defaultCols;
+    } catch { return defaultCols; }
+  });
+  useEffect(() => {
+    localStorage.setItem("txn_cols_visible", JSON.stringify(visibleCols));
+  }, [visibleCols]);
+
+  // data
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // YYYY-MM-DD range for the current year
-  function currentYearRange() {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
-    const end = new Date(now.getFullYear(), 11, 31).toISOString().slice(0, 10);
-    return { start, end };
-  }
-
-  // load unified transactions once (current year)
+  // close popovers on outside click
   useEffect(() => {
-    const { start, end } = currentYearRange();
+    function onDoc(e) {
+      if (filtersOpen && filtersRef.current && !filtersRef.current.contains(e.target)) setFiltersOpen(false);
+      if (columnsOpen && columnsRef.current && !columnsRef.current.contains(e.target)) setColumnsOpen(false);
+      if (densityOpen && densityRef.current && !densityRef.current.contains(e.target)) setDensityOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [filtersOpen, columnsOpen, densityOpen]);
 
+  // compute & set range when preset changes
+  useEffect(() => {
+    if (preset === "Custom") return;
+    const today = new Date();
+    const y = today.getFullYear();
+    const mm = (n) => String(n).padStart(2, "0");
+    const toISO = (d) => d.toISOString().slice(0, 10);
+
+    let s, e;
+    if (preset === "Current day") {
+      s = toISO(new Date(y, today.getMonth(), today.getDate()));
+      e = s;
+    } else if (preset === "Current week") {
+      const dow = today.getDay(); // 0 Sun - 6 Sat
+      const mondayOffset = (dow + 6) % 7; // days since Monday
+      const startDate = new Date(y, today.getMonth(), today.getDate() - mondayOffset);
+      s = toISO(startDate);
+      e = toISO(today);
+    } else if (preset === "Current month") {
+      s = `${y}-${mm(today.getMonth() + 1)}-01`;
+      e = toISO(today);
+    } else {
+      // Current year
+      s = `${y}-01-01`;
+      e = toISO(today);
+    }
+    setStart(s);
+    setEnd(e);
+  }, [preset]);
+
+  // initial range
+  useEffect(() => {
+    if (!start || !end) {
+      const y = new Date().getFullYear();
+      setStart(`${y}-01-01`);
+      setEnd(new Date().toISOString().slice(0, 10));
+    }
+  }, []); // once
+
+  // load data whenever range changes
+  useEffect(() => {
+    if (!start || !end) return;
+    let isCancelled = false;
     async function load() {
       try {
         setLoading(true);
@@ -360,36 +460,89 @@ function TransactionDetails() {
           .gte("txn_date", start)
           .lte("txn_date", end)
           .order("txn_date", { ascending: false })
-          .limit(1000);
+          .limit(5000);
         if (error) throw error;
-        setRows(data || []);
+        if (!isCancelled) setRows(data || []);
       } catch (e) {
-        setErr(e.message || "Failed to load transactions");
+        if (!isCancelled) setErr(e.message || "Failed to load transactions");
       } finally {
-        setLoading(false);
+        if (!isCancelled) setLoading(false);
       }
     }
-
     load();
-  }, []);
+    return () => { isCancelled = true; };
+  }, [start, end]);
 
-  // map UI tab -> transaction kind in the feed
+  // map UI tab -> transaction kind
   const tabToKind = {
+    All: null,
     Inventory: "inventory",
     Sales: "sale",
     Refunds: "refund",
     Expenses: "expense",
   };
 
-  // filter by current tab
-  const displayRows = useMemo(() => {
+  // unique platforms for filter options
+  const platformOptions = useMemo(() => {
+    const s = new Set(rows.map((r) => r.platform).filter(Boolean));
+    return ["", ...Array.from(s)].map((v) => ({ value: v, label: v || "Any platform" }));
+  }, [rows]);
+
+  // apply tab + filters
+  const filteredRows = useMemo(() => {
     const k = tabToKind[tab];
-    if (!k) return rows;
-    return rows.filter((r) => r.txn_type === k);
-  }, [rows, tab]);
+    const base = k ? rows.filter((r) => r.txn_type === k) : rows;
+    const q = (search || "").trim().toLowerCase();
+    const min = minAmt !== "" ? Number(minAmt) : null;
+    const max = maxAmt !== "" ? Number(maxAmt) : null;
+    const p = (platformFilter || "").toLowerCase();
 
-  useMemo(() => null, []); // keep your original no-op
+    return base.filter((r) => {
+      if (q) {
+        const hay = `${r.description || ""} ${r.vendor || ""} ${r.platform || ""} ${r.bank_account || ""} ${r.gl_account || ""} ${r.source_table || ""} ${r.txn_type || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (p && String(r.platform || "").toLowerCase() !== p) return false;
+      const amt = Number(r.amount || 0);
+      if (min !== null && amt < min) return false;
+      if (max !== null && amt > max) return false;
+      return true;
+    });
+  }, [rows, tab, search, platformFilter, minAmt, maxAmt]);
 
+  // sorting + paging
+  const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } =
+    useSortPage(filteredRows);
+  useEffect(() => { resetPage(); }, [sortKey, dir, filteredRows]);
+
+  // density pad
+  const cellPad = densityOptions[density] || densityOptions.cozy;
+
+  // export CSV of filteredRows (respect visible columns)
+  function exportCSV() {
+    const cols = ALL_COLUMNS.filter((c) => visibleCols[c.id]);
+    const head = cols.map((c) => c.label);
+    const esc = (val) => {
+      if (val == null) return "";
+      const s = String(val);
+      if (s.includes('"') || s.includes(",") || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+    const rowsCsv = filteredRows.map((r) => cols.map((c) => {
+      const key = c.key;
+      let v = r[key];
+      if (c.id === "date") v = fmtDate(r.txn_date);
+      if (c.id === "amount") v = Number(r.amount || 0).toFixed(2);
+      return esc(v ?? "");
+    }).join(","));
+    const csv = [head.join(","), ...rowsCsv].join("\n");
+    const fname = `transactions_${start}_to_${end}${tab !== "All" ? `_${tab.toLowerCase()}` : ""}.csv`;
+    dl(fname, csv);
+  }
+
+  // UI
   return (
     <div className="space-y-4">
       {/* Tabs */}
@@ -405,63 +558,197 @@ function TransactionDetails() {
         ))}
       </div>
 
-      <Card title={`${tab} Detail`}>
-        {/* Top row of actions (stub) */}
-        <div className="flex flex-wrap gap-2 mb-3">
-          <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Filters</button>
-          <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Columns</button>
-          <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Density</button>
-          <button className="px-3 py-2 rounded-xl border border-slate-200 bg-white">Export</button>
-        </div>
+      {/* Range picker */}
+      <Card
+        title="Date Range"
+        right={
+          <div className="flex items-center gap-2">
+            {["Current day", "Current week", "Current month", "Current year", "Custom"].map((p) => (
+              <button
+                key={p}
+                className={`px-3 py-2 rounded-xl text-sm border ${preset === p ? "bg-[#1f4e6b] text-white border-[#1f4e6b]" : "bg-white border-slate-200"}`}
+                onClick={() => setPreset(p)}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        {preset === "Custom" && (
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className={labelCls}>Start</span>
+              <input type="date" className={baseInput + " mt-1"} value={start} onChange={(e) => setStart(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className={labelCls}>End</span>
+              <input type="date" className={baseInput + " mt-1"} value={end} onChange={(e) => setEnd(e.target.value)} />
+            </label>
+            <div className="text-sm text-slate-500">
+              Showing <span className="font-medium">{fmtDate(start)}</span> → <span className="font-medium">{fmtDate(end)}</span>
+            </div>
+          </div>
+        )}
+        {preset !== "Custom" && (
+          <div className="text-sm text-slate-600">
+            Showing <span className="font-medium">{fmtDate(start)}</span> → <span className="font-medium">{fmtDate(end)}</span> ({preset})
+          </div>
+        )}
+      </Card>
 
-        {/* Data state */}
-        {loading && <div>Loading transactions…</div>}
-        {err && <div className="text-red-600">{err}</div>}
-
-        {!loading && !err && (
-          <>
-            <div className="text-sm text-slate-600 mb-2">
-              Loaded {rows.length} transaction(s) for current year{tab ? ` — showing ${displayRows.length} in "${tab}"` : ""}
+      <Card
+        title={`${tab} Detail`}
+        right={
+          <div className="flex flex-wrap gap-2">
+            {/* Filters */}
+            <div className="relative" ref={filtersRef}>
+              <Button className="border border-slate-200 bg-white" onClick={() => setFiltersOpen((s) => !s)}>Filters</Button>
+              {filtersOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-20">
+                  <div className="grid grid-cols-1 gap-3">
+                    <label className="block">
+                      <span className={labelCls}>Search</span>
+                      <input
+                        className={baseInput + " mt-1"}
+                        placeholder="Search description, vendor, platform…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={labelCls}>Platform</span>
+                      <select className={baseInput + " mt-1"} value={platformFilter} onChange={(e) => setPlatformFilter(e.target.value)}>
+                        {platformOptions.map((o) => <option key={o.value || "_any"} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className={labelCls}>Min amount (£)</span>
+                        <input type="number" className={baseInput + " mt-1"} value={minAmt} onChange={(e) => setMinAmt(e.target.value)} />
+                      </label>
+                      <label className="block">
+                        <span className={labelCls}>Max amount (£)</span>
+                        <input type="number" className={baseInput + " mt-1"} value={maxAmt} onChange={(e) => setMaxAmt(e.target.value)} />
+                      </label>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <Button className="border" onClick={() => { setSearch(""); setPlatformFilter(""); setMinAmt(""); setMaxAmt(""); }}>Reset</Button>
+                    <Button className="bg-[#2f6b8f] text-white" onClick={() => setFiltersOpen(false)}>Apply</Button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {displayRows.length === 0 ? (
-              <div className="text-slate-500">No transactions for the selected filters.</div>
-            ) : (
-              <div className="overflow-auto rounded-2xl border border-slate-200">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Date</th>
-                      <th className="px-3 py-2 text-left">Type</th>
-                      <th className="px-3 py-2 text-left">Source</th>
-                      <th className="px-3 py-2 text-left">Description</th>
-                      <th className="px-3 py-2 text-right">Amount</th>
-                      <th className="px-3 py-2 text-left">Vendor</th>
-                      <th className="px-3 py-2 text-left">Platform</th>
-                      <th className="px-3 py-2 text-left">GL</th>
-                      <th className="px-3 py-2 text-left">Bank</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-800">
-                    {displayRows.map((r) => (
-                      <tr key={r.id}>
-                        <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.txn_date)}</td>
-                        <td className="px-3 py-2">{r.txn_type || "-"}</td>
-                        <td className="px-3 py-2">{r.source_table || "-"}</td>
-                        <td className="px-3 py-2">{r.description || "-"}</td>
-                        <td className="px-3 py-2 text-right">{fmtMoney(r.amount)}</td>
-                        <td className="px-3 py-2">{r.vendor || "-"}</td>
-                        <td className="px-3 py-2">{r.platform ?? "-"}</td>
-                        <td className="px-3 py-2">{r.gl_account ?? "-"}</td>
-                        <td className="px-3 py-2">{r.bank_account || "-"}</td>
-                      </tr>
+            {/* Columns */}
+            <div className="relative" ref={columnsRef}>
+              <Button className="border border-slate-200 bg-white" onClick={() => setColumnsOpen((s) => !s)}>Columns</Button>
+              {columnsOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-20">
+                  <div className="flex items-center justify-between mb-2">
+                    <Button className="border" onClick={() => setVisibleCols(ALL_COLUMNS.reduce((a, c) => (a[c.id] = true, a), {}))}>Show all</Button>
+                    <Button className="border" onClick={() => setVisibleCols(ALL_COLUMNS.reduce((a, c) => (a[c.id] = false, a), {}))}>Hide all</Button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 max-h-56 overflow-auto pr-1">
+                    {ALL_COLUMNS.map((c) => (
+                      <label key={c.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={!!visibleCols[c.id]}
+                          onChange={(e) => setVisibleCols((v) => ({ ...v, [c.id]: e.target.checked }))}
+                        />
+                        {c.label}
+                      </label>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Density */}
+            <div className="relative" ref={densityRef}>
+              <Button className="border border-slate-200 bg-white" onClick={() => setDensityOpen((s) => !s)}>Density</Button>
+              {densityOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-20">
+                  {Object.keys(densityOptions).map((d) => (
+                    <label key={d} className="flex items-center gap-2 text-sm py-1">
+                      <input type="radio" name="density" checked={density === d} onChange={() => setDensity(d)} />
+                      {d[0].toUpperCase() + d.slice(1)}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Export */}
+            <Button className="border border-slate-200 bg-white" onClick={exportCSV}>Export</Button>
+          </div>
+        }
+      >
+        {/* Data state */}
+        <div className="mb-3 text-sm text-slate-600">
+          {loading ? "Loading transactions…" : `Loaded ${rows.length} transaction(s). Showing ${filteredRows.length} after filters.`}
+          {err && <span className="ml-2 text-red-600">{err}</span>}
+        </div>
+
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm text-slate-500">
+            Sorted by {sortKey || "—"} {sortKey ? (dir === "asc" ? "↑" : "↓") : ""}
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span>Rows:</span>
+            <select className="border rounded-lg px-2 py-1" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
+              <option>5</option><option>10</option><option>25</option><option>50</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Table */}
+        {(!loading && filteredRows.length === 0) ? (
+          <div className="text-slate-500">No transactions for the selected filters.</div>
+        ) : (
+          <div className="overflow-auto rounded-2xl border border-slate-200">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  {ALL_COLUMNS.map((c) =>
+                    visibleCols[c.id] ? (
+                      <SortHeader
+                        key={c.id}
+                        label={c.label}
+                        sortKey={c.key}
+                        activeKey={c.key === sortKey ? sortKey : sortKey}
+                        dir={dir}
+                        onSort={onSort}
+                      />
+                    ) : null
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-800">
+                {viewRows.map((r) => (
+                  <tr key={r.id}>
+                    {visibleCols.date && <td className={`${cellPad} whitespace-nowrap`}>{fmtDate(r.txn_date)}</td>}
+                    {visibleCols.type && <td className={cellPad}>{r.txn_type || "-"}</td>}
+                    {visibleCols.source && <td className={cellPad}>{r.source_table || "-"}</td>}
+                    {visibleCols.description && <td className={cellPad}>{r.description || "-"}</td>}
+                    {visibleCols.amount && <td className={`${cellPad} text-right`}>{fmtMoney(r.amount)}</td>}
+                    {visibleCols.vendor && <td className={cellPad}>{r.vendor || "-"}</td>}
+                    {visibleCols.platform && <td className={cellPad}>{r.platform ?? "-"}</td>}
+                    {visibleCols.gl && <td className={cellPad}>{r.gl_account ?? "-"}</td>}
+                    {visibleCols.bank && <td className={cellPad}>{r.bank_account || "-"}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+
+        {/* Pager */}
+        <div className="mt-3 flex items-center justify-between">
+          <Pager page={page} setPage={setPage} totalPages={totalPages} />
+        </div>
       </Card>
     </div>
   );
