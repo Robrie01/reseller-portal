@@ -247,7 +247,7 @@ function GetStarted() {
   );
 }
 
-/** UPDATED: live chart + stats from transactions_feed */
+/** UPDATED: Dashboard includes COGS + shipping + fees + expenses, and subtracts refunds */
 function Dashboard() {
   const [series, setSeries] = useState([]);
 
@@ -257,30 +257,87 @@ function Dashboard() {
     const end = new Date().toISOString().slice(0, 10);
 
     (async () => {
-      const { data, error } = await supabase
-        .from("transactions_feed")
-        .select("txn_date, txn_type, amount")
-        .gte("txn_date", start)
-        .lte("txn_date", end)
-        .limit(10000);
-      if (error) { console.error(error); return; }
+      try {
+        // Pull this year's sales (for income + cost components), standalone expenses, and refunds
+        const [salesRes, expRes, refRes] = await Promise.all([
+          supabase
+            .from("sales")
+            .select("sale_date, sale_price, shipping_cost, transaction_fees, purchase_price")
+            .gte("sale_date", start)
+            .lte("sale_date", end)
+            .limit(10000),
 
-      const buckets = {};
-      for (const r of (data || [])) {
-        const d = new Date(r.txn_date);
-        if (isNaN(d)) continue;
-        const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
-        if (!buckets[key]) buckets[key] = { m: key, income: 0, expenses: 0 };
-        if (r.txn_type === "sale") buckets[key].income += Number(r.amount || 0);
-        if (r.txn_type === "expense") buckets[key].expenses += Number(r.amount || 0);
+          supabase
+            .from("expenses")
+            .select("date, amount")
+            .gte("date", start)
+            .lte("date", end)
+            .limit(10000),
+
+          supabase
+            .from("refunds")
+            .select("refund_date, amount")
+            .gte("refund_date", start)
+            .lte("refund_date", end)
+            .limit(10000),
+        ]);
+
+        const sales = salesRes.data || [];
+        const exps = expRes.data || [];
+        const refs = refRes.data || [];
+
+        // Bucket by month
+        const buckets = {};
+        const ensure = (d) => {
+          const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
+          if (!buckets[key]) buckets[key] = { m: key, income: 0, expenses: 0 };
+          return buckets[key];
+        };
+
+        // Income = sum(sale_price)
+        // Expenses = COGS (purchase_price) + shipping + transaction_fees
+        for (const r of sales) {
+          const d = new Date(r.sale_date);
+          if (isNaN(d)) continue;
+          const b = ensure(d);
+          b.income += Number(r.sale_price || 0);
+          b.expenses +=
+            Number(r.purchase_price || 0) +
+            Number(r.shipping_cost || 0) +
+            Number(r.transaction_fees || 0);
+        }
+
+        // Add standalone expenses
+        for (const r of exps) {
+          const d = new Date(r.date);
+          if (isNaN(d)) continue;
+          const b = ensure(d);
+          b.expenses += Number(r.amount || 0);
+        }
+
+        // Subtract refunds from income
+        for (const r of refs) {
+          const d = new Date(r.refund_date);
+          if (isNaN(d)) continue;
+          const b = ensure(d);
+          b.income -= Number(r.amount || 0);
+        }
+
+        // Ensure months 1..12 exist in order
+        const arr = Array.from({ length: 12 }, (_, i) => {
+          const k = `${y}/${i + 1}`;
+          return {
+            m: `${i + 1}/${y}`,
+            income: buckets[k]?.income || 0,
+            expenses: buckets[k]?.expenses || 0,
+          };
+        });
+
+        setSeries(arr);
+      } catch (e) {
+        console.error(e);
+        setSeries([]);
       }
-
-      const arr = Array.from({ length: 12 }, (_, i) => {
-        const k = `${y}/${i + 1}`;
-        return { m: `${i + 1}/${y}`, income: buckets[k]?.income || 0, expenses: buckets[k]?.expenses || 0 };
-      });
-
-      setSeries(arr);
     })();
   }, []);
 
@@ -291,10 +348,13 @@ function Dashboard() {
     </div>
   );
 
-  const totals = series.reduce((acc, r) => ({
-    income: acc.income + r.income,
-    expenses: acc.expenses + r.expenses,
-  }), { income: 0, expenses: 0 });
+  const totals = series.reduce(
+    (acc, r) => ({
+      income: acc.income + r.income,
+      expenses: acc.expenses + r.expenses,
+    }),
+    { income: 0, expenses: 0 }
+  );
 
   const profit = totals.income - totals.expenses;
   const margin = totals.income ? (profit / totals.income) * 100 : 0;
