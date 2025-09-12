@@ -252,94 +252,115 @@ function Dashboard() {
   const [series, setSeries] = useState([]);
 
   useEffect(() => {
-    const y = new Date().getFullYear();
-    const start = `${y}-01-01`;
-    const end = new Date().toISOString().slice(0, 10);
+  const y = new Date().getFullYear();
+  const start = `${y}-01-01`;
+  const end = new Date().toISOString().slice(0, 10);
 
-    (async () => {
-      try {
-        // Pull this year's sales (for income + cost components), standalone expenses, and refunds
-        const [salesRes, expRes, refRes] = await Promise.all([
-          supabase
-            .from("sales")
-            .select("sale_date, sale_price, shipping_cost, transaction_fees, purchase_price")
-            .gte("sale_date", start)
-            .lte("sale_date", end)
-            .limit(10000),
+  (async () => {
+    try {
+      // Pull this year's five feeds (already filtered per-user by RLS)
+      const [salesRes, refundsRes, expensesRes, rebatesRes, inventoryRes] = await Promise.all([
+        supabase
+          .from("feed_sales")
+          .select("txn_date, amount")
+          .gte("txn_date", start)
+          .lte("txn_date", end)
+          .limit(10000),
+        supabase
+          .from("feed_refunds")
+          .select("txn_date, amount")
+          .gte("txn_date", start)
+          .lte("txn_date", end)
+          .limit(10000),
+        supabase
+          .from("feed_expenses")
+          .select("txn_date, amount")
+          .gte("txn_date", start)
+          .lte("txn_date", end)
+          .limit(10000),
+        supabase
+          .from("feed_rebates")
+          .select("txn_date, amount")
+          .gte("txn_date", start)
+          .lte("txn_date", end)
+          .limit(10000),
+        supabase
+          .from("feed_inventory_purchases")
+          .select("txn_date, amount")
+          .gte("txn_date", start)
+          .lte("txn_date", end)
+          .limit(10000),
+      ]);
 
-          supabase
-            .from("expenses")
-            .select("date, amount")
-            .gte("date", start)
-            .lte("date", end)
-            .limit(10000),
+      const sales = salesRes.data || [];
+      const refunds = refundsRes.data || [];
+      const opEx = expensesRes.data || [];       // operating expenses (non-COGS)
+      const rebates = rebatesRes.data || [];     // supplier rebates (reduce op-ex)
+      const cogs = inventoryRes.data || [];      // inventory purchases (COGS)
 
-          supabase
-            .from("refunds")
-            .select("refund_date, amount")
-            .gte("refund_date", start)
-            .lte("refund_date", end)
-            .limit(10000),
-        ]);
+      // Bucket by month
+      const buckets = {};
+      const ensure = (d) => {
+        const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
+        if (!buckets[key]) buckets[key] = { m: key, income: 0, opEx: 0, cogs: 0 };
+        return buckets[key];
+      };
 
-        const sales = salesRes.data || [];
-        const exps = expRes.data || [];
-        const refs = refRes.data || [];
-
-        // Bucket by month
-        const buckets = {};
-        const ensure = (d) => {
-          const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
-          if (!buckets[key]) buckets[key] = { m: key, income: 0, expenses: 0 };
-          return buckets[key];
-        };
-
-        // Income = sum(sale_price)
-        // Expenses = COGS (purchase_price) + shipping + transaction_fees
-        for (const r of sales) {
-          const d = new Date(r.sale_date);
-          if (isNaN(d)) continue;
-          const b = ensure(d);
-          b.income += Number(r.sale_price || 0);
-          b.expenses +=
-            Number(r.purchase_price || 0) +
-            Number(r.shipping_cost || 0) +
-            Number(r.transaction_fees || 0);
-        }
-
-        // Add standalone expenses
-        for (const r of exps) {
-          const d = new Date(r.date);
-          if (isNaN(d)) continue;
-          const b = ensure(d);
-          b.expenses += Number(r.amount || 0);
-        }
-
-        // Subtract refunds from income
-        for (const r of refs) {
-          const d = new Date(r.refund_date);
-          if (isNaN(d)) continue;
-          const b = ensure(d);
-          b.income -= Number(r.amount || 0);
-        }
-
-        // Ensure months 1..12 exist in order
-        const arr = Array.from({ length: 12 }, (_, i) => {
-          const k = `${y}/${i + 1}`;
-          return {
-            m: `${i + 1}/${y}`,
-            income: buckets[k]?.income || 0,
-            expenses: buckets[k]?.expenses || 0,
-          };
-        });
-
-        setSeries(arr);
-      } catch (e) {
-        console.error(e);
-        setSeries([]);
+      // Income = sales - refunds
+      for (const r of sales) {
+        const d = new Date(r.txn_date);
+        if (isNaN(d)) continue;
+        ensure(d).income += Number(r.amount || 0);
       }
-    })();
-  }, []);
+      for (const r of refunds) {
+        const d = new Date(r.txn_date);
+        if (isNaN(d)) continue;
+        ensure(d).income -= Number(r.amount || 0);
+      }
+
+      // Operating expenses = expenses - rebates
+      for (const r of opEx) {
+        const d = new Date(r.txn_date);
+        if (isNaN(d)) continue;
+        ensure(d).opEx += Number(r.amount || 0);
+      }
+      for (const r of rebates) {
+        const d = new Date(r.txn_date);
+        if (isNaN(d)) continue;
+        ensure(d).opEx -= Number(r.amount || 0);
+      }
+
+      // COGS (inventory purchases)
+      for (const r of cogs) {
+        const d = new Date(r.txn_date);
+        if (isNaN(d)) continue;
+        ensure(d).cogs += Number(r.amount || 0);
+      }
+
+      // Build 12 months in order; keep your existing chart keys:
+      //   income  (sales - refunds)
+      //   expenses (opEx + cogs)   <-- for now your chart expects a single "expenses" line
+      const arr = Array.from({ length: 12 }, (_, i) => {
+        const k = `${y}/${i + 1}`;
+        const b = buckets[k] || { income: 0, opEx: 0, cogs: 0 };
+        return {
+          m: `${i + 1}/${y}`,
+          income: b.income,
+          opEx: b.opEx,
+          cogs: b.cogs,
+          // keep a single "expenses" field for your existing chart line
+          expenses: b.opEx + b.cogs,
+        };
+      });
+
+      setSeries(arr);
+    } catch (e) {
+      console.error(e);
+      setSeries([]);
+    }
+  })();
+}, []);
+
 
   const Stat = ({ label, value }) => (
     <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -348,22 +369,23 @@ function Dashboard() {
     </div>
   );
 
-  const totals = series.reduce(
-    (acc, r) => ({
-      income: acc.income + r.income,
-      expenses: acc.expenses + r.expenses,
-    }),
-    { income: 0, expenses: 0 }
-  );
-
-  const profit = totals.income - totals.expenses;
+  const totals = series.reduce((acc, r) => {
+    acc.income += r.income || 0;
+    acc.opEx  += r.opEx  || 0;
+    acc.cogs  += r.cogs  || 0;
+    return acc;
+  }, { income: 0, opEx: 0, cogs: 0 });
+    
+  const expensesTotal = totals.opEx + totals.cogs; // OpEx + COGS
+  const profit = totals.income - expensesTotal;
   const margin = totals.income ? (profit / totals.income) * 100 : 0;
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Stat label="Income" value={`£${totals.income.toFixed(2)}`} />
-        <Stat label="Expenses" value={`£${totals.expenses.toFixed(2)}`} />
+        <Stat label="Op-Ex" value={`£${totals.opEx.toFixed(2)}`} />
+        <Stat label="COGS" value={`£${totals.cogs.toFixed(2)}`} />
         <Stat label="Profit (£)" value={`£${profit.toFixed(2)}`} />
         <Stat label="Profit (%)" value={`${margin.toFixed(2)}%`} />
       </div>
