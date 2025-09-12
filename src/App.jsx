@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   Search, Bell, Settings, User as UserIcon, LogOut, Plus, BarChart2, Package,
-  Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon, Trash2, Pencil, X, Save
+  Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon, Trash2, Pencil, X, Save, RotateCcw, BadgeDollarSign
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
 import { addExpense, mapGLAccount } from "./db/expenses";
@@ -1752,6 +1752,205 @@ function IntegrationRow({ title, platform, beta }) {
   );
 }
 
+// ---------- Add Rebate / Refund ----------
+function AddRebateRefund() {
+  const [openRebate, setOpenRebate] = useState(false);
+  const [openRefund, setOpenRefund] = useState(false);
+  const [rows, setRows] = useState([]); // unified list
+  const [loading, setLoading] = useState(false);
+  const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } = useSortPage(rows);
+
+  useEffect(() => { resetPage(); }, [sortKey, dir, rows]);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [{ data: rebates = [] }, { data: refunds = [] }] = await Promise.all([
+        supabase.from("rebates").select("id, vendor, description, amount, date, bank_account, created_at").order("created_at", { ascending: false }),
+        supabase.from("refunds").select("id, item, amount, refund_date, sale_id, created_at").order("created_at", { ascending: false }),
+      ]);
+      // normalize to one grid
+      const unified = [
+        ...rebates.map(r => ({
+          id: r.id,
+          type: "rebate",
+          title: r.description || "(rebate)",
+          vendor: r.vendor || "-",
+          amount: Number(r.amount || 0),
+          date: r.date,
+          bank: r.bank_account || "-",
+          created_at: r.created_at
+        })),
+        ...refunds.map(r => ({
+          id: r.id,
+          type: "refund",
+          title: r.item || "(refund)",
+          vendor: "-", // customer refunds aren't tied to vendor here
+          amount: Number(r.amount || 0),
+          date: r.refund_date,
+          bank: "-",
+          created_at: r.created_at
+        })),
+      ];
+      setRows(unified);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function deleteRow(row) {
+    if (!confirm(`Delete this ${row.type}?`)) return;
+    const table = row.type === "rebate" ? "rebates" : "refunds";
+    const { error } = await supabase.from(table).delete().eq("id", row.id);
+    if (error) return alert(error.message);
+    setRows((r) => r.filter(x => x.id !== row.id));
+  }
+
+  // -- Add Rebate form handlers
+  async function saveRebate(closeAfter) {
+    const get = (id) => document.getElementById(id);
+    const values = {
+      vendor: get("rebate-vendor").value,
+      description: get("rebate-desc").value,
+      amount: Number(get("rebate-amount").value || 0),
+      date: get("rebate-date").value,
+      bank_account: get("rebate-bank").value || null,
+    };
+    if (!values.amount || !values.date) return alert("Amount and Date are required.");
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return alert("You are signed out.");
+    const { error } = await supabase.from("rebates").insert([{ ...values, user_id: session.user.id }]);
+    if (error) return alert(error.message);
+    await load();
+    if (closeAfter) setOpenRebate(false);
+    else { get("rebate-desc").value = ""; get("rebate-amount").value = ""; }
+  }
+
+  // -- Add Refund form handlers
+  async function saveRefund(closeAfter) {
+    const get = (id) => document.getElementById(id);
+    const values = {
+      item: get("refund-item").value,
+      amount: Number(get("refund-amount").value || 0),
+      refund_date: get("refund-date").value,
+      sale_id: null, // could wire up a picker later
+    };
+    if (!values.amount || !values.refund_date) return alert("Amount and Date are required.");
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return alert("You are signed out.");
+    const { error } = await supabase.from("refunds").insert([{ ...values, user_id: session.user.id }]);
+    if (error) return alert(error.message);
+    await load();
+    if (closeAfter) setOpenRefund(false);
+    else { get("refund-item").value = ""; get("refund-amount").value = ""; }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card
+        title="Add Rebate/Refund"
+        right={
+          <div className="flex items-center gap-2">
+            <Button className="bg-[#1f4e6b] text-white" onClick={() => setOpenRebate(true)}>
+              <BadgeDollarSign size={16}/> Add Rebate
+            </Button>
+            <Button className="bg-slate-900 text-white" onClick={() => setOpenRefund(true)}>
+              <RotateCcw size={16}/> Add Refund
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-slate-700">Record cash coming back from vendors (rebate) or money returned to customers (refund).</p>
+      </Card>
+
+      <Card
+        title="Your Rebates/Refunds"
+        right={
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            {loading ? "Loading..." : `${rows.length} row(s)`}
+            <select className="border rounded-lg px-2 py-1" value={pageSize} onChange={(e)=>{setPageSize(Number(e.target.value)); setPage(1);}}>
+              <option>5</option><option>10</option><option>25</option>
+            </select>
+          </div>
+        }
+      >
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <SortHeader label="Type" sortKey="type" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Title" sortKey="title" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Vendor" sortKey="vendor" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Amount" sortKey="amount" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <SortHeader label="Date" sortKey="date" activeKey={sortKey} dir={dir} onSort={onSort} />
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {viewRows.length === 0 && (<tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No items yet</td></tr>)}
+              {viewRows.map((r) => (
+                <tr key={`${r.type}-${r.id}`} className="border-t">
+                  <td className="px-3 py-2 capitalize">{r.type}</td>
+                  <td className="px-3 py-2">{r.title}</td>
+                  <td className="px-3 py-2">{r.vendor}</td>
+                  <td className="px-3 py-2">{fmtMoney(r.amount)}</td>
+                  <td className="px-3 py-2">{fmtDate(r.date)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <IconBtn title="Delete" onClick={() => deleteRow(r)}><Trash2 size={16}/></IconBtn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 flex items-center justify-between"><Pager page={page} setPage={setPage} totalPages={totalPages} /></div>
+      </Card>
+
+      {/* Add Rebate */}
+      <Modal
+        open={openRebate}
+        onClose={() => setOpenRebate(false)}
+        title="Add Rebate"
+        footer={
+          <>
+            <Button className="bg-slate-100" onClick={() => saveRebate(false)}>Add and Next</Button>
+            <Button className="bg-[#2f6b8f] text-white" onClick={() => saveRebate(true)}>Add</Button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <TextField label="Vendor" id="rebate-vendor" />
+          <TextField label="Amount (£)" id="rebate-amount" prefix="£" type="number" />
+          <DateField label="Date" id="rebate-date" />
+          <TextField label="Bank Account" id="rebate-bank" />
+          <TextArea label="Description" id="rebate-desc" className="md:col-span-2" />
+        </div>
+      </Modal>
+
+      {/* Add Refund */}
+      <Modal
+        open={openRefund}
+        onClose={() => setOpenRefund(false)}
+        title="Add Refund"
+        footer={
+          <>
+            <Button className="bg-slate-100" onClick={() => saveRefund(false)}>Add and Next</Button>
+            <Button className="bg-[#2f6b8f] text-white" onClick={() => saveRefund(true)}>Add</Button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <TextField label="Item / Reason" id="refund-item" />
+          <TextField label="Amount (£)" id="refund-amount" prefix="£" type="number" />
+          <DateField label="Refund Date" id="refund-date" />
+          <TextArea label="Notes (optional)" id="refund-notes" className="md:col-span-2" />
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
 // ---------- page registry & shell ----------
 const PAGES = {
   "Get Started": GetStarted,
@@ -1761,6 +1960,7 @@ const PAGES = {
   "Report Sale": ReportSale,
   "Add Inventory": AddInventory,
   "Add Expense": AddExpense,
+  "Add Rebate/Refund": AddRebateRefund,
   Integrations: Integrations,
 };
 
@@ -1780,6 +1980,8 @@ function iconFor(name) {
       return Package;
     case "Add Expense":
       return Receipt;
+    case "Add Rebate/Refund":
+      return RotateCcw; 
     case "Integrations":
       return LinkIcon;
     default:
