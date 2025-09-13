@@ -200,40 +200,42 @@ export default function TaxonomyPicker({
     </div>
   );
 
-  const List = ({ items, onSelect, emptyAddLabel, onAdd, loading }) => (
-    <div className="mt-1 max-h-44 overflow-auto rounded-xl border border-gray-700 bg-gray-800">
-      {loading ? (
-        <div className="px-3 py-2 text-sm text-gray-400">Loading…</div>
-      ) : items.length ? (
+// Light-theme dropdown list (absolute, white, shadow)
+    const List = ({ items, onSelect, emptyAddLabel, onAdd, loading }) => (
+    <div className="absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg z-20">
+        {loading ? (
+        <div className="px-3 py-2 text-sm text-gray-500">Loading…</div>
+        ) : items.length ? (
         items.map((o) => (
-          <button
+            <button
             key={o.id}
             type="button"
-            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-700"
+            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
             onClick={() => onSelect(o)}
-          >
+            >
             {o.name}
-          </button>
+            </button>
         ))
-      ) : (
-        <div className="px-3 py-2 text-sm text-gray-400">
-          No matches.
-          {onAdd && (
+        ) : (
+        <div className="px-3 py-2 text-sm text-gray-500">
+            No matches.
+            {onAdd && (
             <>
-              {" "}
-              <button
+                {" "}
+                <button
                 type="button"
-                className="underline hover:no-underline"
+                className="text-blue-600 underline hover:no-underline"
                 onClick={onAdd}
-              >
+                >
                 {emptyAddLabel}
-              </button>
+                </button>
             </>
-          )}
+            )}
         </div>
-      )}
+        )}
     </div>
-  );
+    );
+
 
     return (
     <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 ${className}`}>
