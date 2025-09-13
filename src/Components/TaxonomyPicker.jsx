@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   listDepartments,
   listCategories,
@@ -9,10 +9,8 @@ import {
 } from "../db/taxonomy";
 
 /**
- * TaxonomyPicker (light theme)
+ * TaxonomyPicker — light theme, stable typing focus
  * Department -> Category -> Sub-category
- * - Searchable inputs with inline “Add …”
- * - Emits { department, category, subcategory } via onChange
  */
 export default function TaxonomyPicker({
   value,
@@ -23,38 +21,38 @@ export default function TaxonomyPicker({
 }) {
   // Selected rows
   const [department, setDepartment] = useState(value?.department ?? null);
-  const [category, setCategory]   = useState(value?.category ?? null);
+  const [category, setCategory] = useState(value?.category ?? null);
   const [subcategory, setSubcategory] = useState(value?.subcategory ?? null);
 
-  // Query text
+  // Queries
   const [deptQuery, setDeptQuery] = useState("");
-  const [catQuery,  setCatQuery]  = useState("");
-  const [subQuery,  setSubQuery]  = useState("");
+  const [catQuery, setCatQuery] = useState("");
+  const [subQuery, setSubQuery] = useState("");
 
   // Options
   const [deptOpts, setDeptOpts] = useState([]);
-  const [catOpts,  setCatOpts]  = useState([]);
-  const [subOpts,  setSubOpts]  = useState([]);
+  const [catOpts, setCatOpts] = useState([]);
+  const [subOpts, setSubOpts] = useState([]);
 
   // Loading flags
   const [loadingDept, setLoadingDept] = useState(false);
-  const [loadingCat,  setLoadingCat]  = useState(false);
-  const [loadingSub,  setLoadingSub]  = useState(false);
+  const [loadingCat, setLoadingCat] = useState(false);
+  const [loadingSub, setLoadingSub] = useState(false);
 
-  // Keep focus while typing
+  // Refs to keep focus pinned on inputs while typing
   const deptRef = useRef(null);
-  const catRef  = useRef(null);
-  const subRef  = useRef(null);
+  const catRef = useRef(null);
+  const subRef = useRef(null);
 
   const emit = (d, c, s) => {
     onChange?.({
       department: d ? { id: d.id, name: d.name } : null,
-      category:   c ? { id: c.id, name: c.name } : null,
-      subcategory:s ? { id: s.id, name: s.name } : null,
+      category: c ? { id: c.id, name: c.name } : null,
+      subcategory: s ? { id: s.id, name: s.name } : null,
     });
   };
 
-  // Fetch departments (filter by query)
+  // Fetch departments
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -66,14 +64,17 @@ export default function TaxonomyPicker({
         if (alive) setLoadingDept(false);
       }
     })();
-    return () => { alive = false; };
+    return () => void (alive = false);
   }, [deptQuery]);
 
-  // Fetch categories when department or query changes
+  // Fetch categories
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!department?.id) { setCatOpts([]); return; }
+      if (!department?.id) {
+        setCatOpts([]);
+        return;
+      }
       setLoadingCat(true);
       try {
         const rows = await listCategories(department.id, catQuery);
@@ -82,14 +83,17 @@ export default function TaxonomyPicker({
         if (alive) setLoadingCat(false);
       }
     })();
-    return () => { alive = false; };
+    return () => void (alive = false);
   }, [department?.id, catQuery]);
 
-  // Fetch subcategories when category or query changes
+  // Fetch subcategories
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!category?.id) { setSubOpts([]); return; }
+      if (!category?.id) {
+        setSubOpts([]);
+        return;
+      }
       setLoadingSub(true);
       try {
         const rows = await listSubcategories(category.id, subQuery);
@@ -98,7 +102,7 @@ export default function TaxonomyPicker({
         if (alive) setLoadingSub(false);
       }
     })();
-    return () => { alive = false; };
+    return () => void (alive = false);
   }, [category?.id, subQuery]);
 
   // External value (edit mode)
@@ -111,7 +115,7 @@ export default function TaxonomyPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.department?.id, value?.category?.id, value?.subcategory?.id]);
 
-  // Clear children when parent changes
+  // Clear children on parent change
   useEffect(() => {
     setCategory(null);
     setSubcategory(null);
@@ -128,7 +132,7 @@ export default function TaxonomyPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category?.id]);
 
-  // Client-side filter for snappy feel
+  // Client-side filters
   const filteredDept = useMemo(
     () => (deptQuery ? deptOpts.filter(o => o.name.toLowerCase().includes(deptQuery.toLowerCase())) : deptOpts),
     [deptOpts, deptQuery]
@@ -142,26 +146,49 @@ export default function TaxonomyPicker({
     [subOpts, subQuery]
   );
 
-  // Add-new
+  // Ensure focus stays in the input after every keystroke/render
+  useEffect(() => {
+    if (!department) deptRef.current?.focus();
+  }, [deptQuery]);
+  useEffect(() => {
+    if (department && !category) catRef.current?.focus();
+  }, [catQuery, department?.id]);
+  useEffect(() => {
+    if (category && !subcategory) subRef.current?.focus();
+  }, [subQuery, category?.id]);
+
+  // Add-new handlers
   const addNewDepartment = async () => {
-    const name = deptQuery.trim(); if (!name) return;
+    const name = deptQuery.trim();
+    if (!name) return;
     const row = await ensureDepartment(name);
-    setDepartment(row); setDeptQuery(""); emit(row, null, null);
+    setDepartment(row);
+    setDeptQuery("");
+    emit(row, null, null);
+    requestAnimationFrame(() => deptRef.current?.focus());
   };
   const addNewCategory = async () => {
     if (!department?.id) return;
-    const name = catQuery.trim(); if (!name) return;
+    const name = catQuery.trim();
+    if (!name) return;
     const row = await ensureCategory(department.id, name);
-    setCategory(row); setCatQuery(""); emit(department, row, null);
+    setCategory(row);
+    setCatQuery("");
+    emit(department, row, null);
+    requestAnimationFrame(() => catRef.current?.focus());
   };
   const addNewSubcategory = async () => {
     if (!category?.id) return;
-    const name = subQuery.trim(); if (!name) return;
+    const name = subQuery.trim();
+    if (!name) return;
     const row = await ensureSubcategory(category.id, name);
-    setSubcategory(row); setSubQuery(""); emit(department, category, row);
+    setSubcategory(row);
+    setSubQuery("");
+    emit(department, category, row);
+    requestAnimationFrame(() => subRef.current?.focus());
   };
 
-  // UI bits
+  // UI helpers
   const Box = ({ label, required, children }) => (
     <div className="flex flex-col gap-1 w-full">
       <label className="text-sm font-medium text-gray-700">
@@ -171,7 +198,7 @@ export default function TaxonomyPicker({
     </div>
   );
 
-  // Light-theme dropdown list; prevent blur so typing continues
+  // Light dropdown; don't steal focus when clicking
   const List = ({ items, onSelect, emptyAddLabel, onAdd, loading }) => (
     <div
       className="absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg z-20"
@@ -219,12 +246,11 @@ export default function TaxonomyPicker({
           <input
             ref={deptRef}
             type="text"
+            autoComplete="off"
+            spellCheck={false}
             disabled={disabled}
             value={department ? department.name : deptQuery}
-            onChange={(e) => {
-              setDeptQuery(e.target.value);
-              requestAnimationFrame(() => deptRef.current?.focus());
-            }}
+            onChange={(e) => setDeptQuery(e.target.value)}
             placeholder="Search or type to add…"
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
           />
@@ -244,12 +270,11 @@ export default function TaxonomyPicker({
           <input
             ref={catRef}
             type="text"
+            autoComplete="off"
+            spellCheck={false}
             disabled={disabled || !department}
             value={category ? category.name : catQuery}
-            onChange={(e) => {
-              setCatQuery(e.target.value);
-              requestAnimationFrame(() => catRef.current?.focus());
-            }}
+            onChange={(e) => setCatQuery(e.target.value)}
             placeholder={department ? "Search or type to add…" : "Select a department first"}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
           />
@@ -269,12 +294,11 @@ export default function TaxonomyPicker({
           <input
             ref={subRef}
             type="text"
+            autoComplete="off"
+            spellCheck={false}
             disabled={disabled || !category}
             value={subcategory ? subcategory.name : subQuery}
-            onChange={(e) => {
-              setSubQuery(e.target.value);
-              requestAnimationFrame(() => subRef.current?.focus());
-            }}
+            onChange={(e) => setSubQuery(e.target.value)}
             placeholder={category ? "Search or type to add…" : "Select a category first"}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
           />
