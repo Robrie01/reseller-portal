@@ -8,6 +8,12 @@ import {
   ensureSubcategory,
 } from "../db/taxonomy";
 
+/**
+ * TaxonomyPicker — light theme + stable typing
+ * - Department → Category → Sub-category
+ * - Keeps a separate "editing" mode so typing never gets overridden by selection
+ * - Dropdown opens only while the input is focused (no stray blur on first key)
+ */
 export default function TaxonomyPicker({
   value,
   onChange,
@@ -20,22 +26,32 @@ export default function TaxonomyPicker({
   const [category, setCategory] = useState(value?.category ?? null);
   const [subcategory, setSubcategory] = useState(value?.subcategory ?? null);
 
-  // Queries
+  // Queries (what the user is typing)
   const [deptQuery, setDeptQuery] = useState("");
   const [catQuery, setCatQuery] = useState("");
   const [subQuery, setSubQuery] = useState("");
+
+  // Is the user actively typing in this field?
+  const [deptEditing, setDeptEditing] = useState(false);
+  const [catEditing, setCatEditing] = useState(false);
+  const [subEditing, setSubEditing] = useState(false);
+
+  // Dropdown open states
+  const [deptOpen, setDeptOpen] = useState(false);
+  const [catOpen, setCatOpen] = useState(false);
+  const [subOpen, setSubOpen] = useState(false);
 
   // Options
   const [deptOpts, setDeptOpts] = useState([]);
   const [catOpts, setCatOpts] = useState([]);
   const [subOpts, setSubOpts] = useState([]);
 
-  // Loading
+  // Loading flags
   const [loadingDept, setLoadingDept] = useState(false);
   const [loadingCat, setLoadingCat] = useState(false);
   const [loadingSub, setLoadingSub] = useState(false);
 
-  // Refs to keep focus
+  // Refs
   const deptRef = useRef(null);
   const catRef = useRef(null);
   const subRef = useRef(null);
@@ -47,7 +63,7 @@ export default function TaxonomyPicker({
       subcategory: s ? { id: s.id, name: s.name } : null,
     });
 
-  // Data fetching
+  // Fetch lists
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -92,7 +108,7 @@ export default function TaxonomyPicker({
     return () => { alive = false; };
   }, [category?.id, subQuery]);
 
-  // External value (edit)
+  // External value (edit mode)
   useEffect(() => {
     if (value) {
       setDepartment(value.department ?? null);
@@ -102,12 +118,14 @@ export default function TaxonomyPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.department?.id, value?.category?.id, value?.subcategory?.id]);
 
-  // Clear children when parent changes
+  // Clear children on parent change
   useEffect(() => {
     setCategory(null);
     setSubcategory(null);
     setCatQuery("");
     setSubQuery("");
+    setCatEditing(false);
+    setSubEditing(false);
     emit(department, null, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [department?.id]);
@@ -115,10 +133,12 @@ export default function TaxonomyPicker({
   useEffect(() => {
     setSubcategory(null);
     setSubQuery("");
+    setSubEditing(false);
     emit(department, category, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category?.id]);
 
+  // Client-side filters
   const filteredDept = useMemo(
     () => (deptQuery ? deptOpts.filter(o => o.name.toLowerCase().includes(deptQuery.toLowerCase())) : deptOpts),
     [deptOpts, deptQuery]
@@ -132,166 +152,213 @@ export default function TaxonomyPicker({
     [subOpts, subQuery]
   );
 
-  // Add-new handlers
+  // Add-new actions
   const addNewDepartment = async () => {
     const name = deptQuery.trim(); if (!name) return;
     const row = await ensureDepartment(name);
-    setDepartment(row); setDeptQuery(""); emit(row, null, null);
+    setDepartment(row);
+    setDeptQuery("");
+    setDeptEditing(false);
+    setDeptOpen(false);
+    emit(row, null, null);
     requestAnimationFrame(() => deptRef.current?.focus());
   };
   const addNewCategory = async () => {
     if (!department?.id) return;
     const name = catQuery.trim(); if (!name) return;
     const row = await ensureCategory(department.id, name);
-    setCategory(row); setCatQuery(""); emit(department, row, null);
+    setCategory(row);
+    setCatQuery("");
+    setCatEditing(false);
+    setCatOpen(false);
+    emit(department, row, null);
     requestAnimationFrame(() => catRef.current?.focus());
   };
   const addNewSubcategory = async () => {
     if (!category?.id) return;
     const name = subQuery.trim(); if (!name) return;
     const row = await ensureSubcategory(category.id, name);
-    setSubcategory(row); setSubQuery(""); emit(department, category, row);
+    setSubcategory(row);
+    setSubQuery("");
+    setSubEditing(false);
+    setSubOpen(false);
+    emit(department, category, row);
     requestAnimationFrame(() => subRef.current?.focus());
   };
 
-  const Box = ({ label, required, children }) => (
+  // Light dropdown; prevent focus steal
+  const List = ({ open, items, onSelect, emptyAddLabel, onAdd, loading }) => {
+    if (!open) return null;
+    return (
+      <div
+        className="absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg z-20"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {loading ? (
+          <div className="px-3 py-2 text-sm text-gray-500">Loading…</div>
+        ) : items.length ? (
+          items.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+              onClick={() => onSelect(o)}
+            >
+              {o.name}
+            </button>
+          ))
+        ) : (
+          <div className="px-3 py-2 text-sm text-gray-500">
+            No matches.
+            {onAdd && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="text-blue-600 underline hover:no-underline"
+                  onClick={onAdd}
+                >
+                  {emptyAddLabel}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Shared input component
+  const Input = ({
+    label,
+    required,
+    refEl,
+    disabled,
+    valueText,
+    placeholder,
+    onFocus,
+    onChange,
+    onBlur,
+  }) => (
     <div className="flex flex-col gap-1 w-full">
       <label className="text-sm font-medium text-gray-700">
         {label} {required ? <span className="text-red-500">*</span> : null}
       </label>
-      {children}
+      <input
+        ref={refEl}
+        type="text"
+        autoComplete="off"
+        spellCheck={false}
+        disabled={disabled}
+        value={valueText}
+        onFocus={onFocus}
+        onChange={onChange}
+        onBlur={onBlur}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+      />
     </div>
   );
 
-  // Light dropdown; don't steal focus on click
-  const List = ({ items, onSelect, emptyAddLabel, onAdd, loading }) => (
-    <div
-      className="absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg z-20"
-      tabIndex={-1}
-      onMouseDown={(e) => e.preventDefault()}
-    >
-      {loading ? (
-        <div className="px-3 py-2 text-sm text-gray-500">Loading…</div>
-      ) : items.length ? (
-        items.map((o) => (
-          <button
-            key={o.id}
-            type="button"
-            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
-            onClick={() => onSelect(o)}
-          >
-            {o.name}
-          </button>
-        ))
-      ) : (
-        <div className="px-3 py-2 text-sm text-gray-500">
-          No matches.
-          {onAdd && (
-            <>
-              {" "}
-              <button
-                type="button"
-                className="text-blue-600 underline hover:no-underline"
-                onClick={onAdd}
-              >
-                {emptyAddLabel}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-
-  // Re-focus the same input if it ever blurs unexpectedly
-  const keepFocus = (ref) => () => {
-    // Delay to allow click selection; if focus moved outside our container, put it back
-    requestAnimationFrame(() => {
-      const el = ref.current;
-      if (!el) return;
-      if (document.activeElement !== el) el.focus();
-    });
-  };
+  // Values shown in the inputs:
+  // If editing, show the query; otherwise show the selected name (or empty)
+  const deptValue = deptEditing ? deptQuery : (department?.name ?? "");
+  const catValue  = catEditing  ? catQuery  : (category?.name   ?? "");
+  const subValue  = subEditing  ? subQuery  : (subcategory?.name ?? "");
 
   return (
     <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 ${className}`}>
       {/* Department */}
-      <Box label="Department" required={!!requiredLevels.department}>
-        <div className="relative">
-          <input
-            ref={deptRef}
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={disabled}
-            value={department ? department.name : deptQuery}
-            onChange={(e) => setDeptQuery(e.target.value)}
-            onBlur={keepFocus(deptRef)}
-            placeholder="Search or type to add…"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <List
-            items={department ? [] : filteredDept}
-            loading={loadingDept}
-            onSelect={(o) => setDepartment(o)}
-            onAdd={deptQuery.trim() ? addNewDepartment : undefined}
-            emptyAddLabel={`Add “${deptQuery.trim()}”`}
-          />
-        </div>
-      </Box>
+      <div className="relative">
+        <Input
+          label="Department"
+          required={!!requiredLevels.department}
+          refEl={deptRef}
+          disabled={disabled}
+          valueText={deptValue}
+          placeholder="Search or type to add…"
+          onFocus={() => { setDeptEditing(true); setDeptOpen(true); }}
+          onChange={(e) => {
+            setDeptEditing(true);
+            setDeptOpen(true);
+            setDeptQuery(e.target.value);
+            if (department) setDepartment(null); // switch to query mode
+          }}
+          onBlur={() => {
+            // close dropdown after click/selection completes
+            setTimeout(() => setDeptOpen(false), 0);
+          }}
+        />
+        <List
+          open={deptOpen && deptEditing}
+          items={filteredDept}
+          loading={loadingDept}
+          onSelect={(o) => { setDepartment(o); setDeptEditing(false); setDeptOpen(false); emit(o, null, null); }}
+          onAdd={deptQuery.trim() ? addNewDepartment : undefined}
+          emptyAddLabel={`Add “${deptQuery.trim()}”`}
+        />
+      </div>
 
       {/* Category */}
-      <Box label="Category" required={!!requiredLevels.category}>
-        <div className="relative">
-          <input
-            ref={catRef}
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={disabled || !department}
-            value={category ? category.name : catQuery}
-            onChange={(e) => setCatQuery(e.target.value)}
-            onBlur={keepFocus(catRef)}
-            placeholder={department ? "Search or type to add…" : "Select a department first"}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
-          />
-          <List
-            items={category || !department ? [] : filteredCat}
-            loading={loadingCat}
-            onSelect={(o) => setCategory(o)}
-            onAdd={department && catQuery.trim() ? addNewCategory : undefined}
-            emptyAddLabel={`Add “${catQuery.trim()}”`}
-          />
-        </div>
-      </Box>
+      <div className="relative">
+        <Input
+          label="Category"
+          required={!!requiredLevels.category}
+          refEl={catRef}
+          disabled={disabled || !department}
+          valueText={catValue}
+          placeholder={department ? "Search or type to add…" : "Select a department first"}
+          onFocus={() => { if (department) { setCatEditing(true); setCatOpen(true); } }}
+          onChange={(e) => {
+            setCatEditing(true);
+            setCatOpen(true);
+            setCatQuery(e.target.value);
+            if (category) setCategory(null);
+          }}
+          onBlur={() => {
+            setTimeout(() => setCatOpen(false), 0);
+          }}
+        />
+        <List
+          open={catOpen && catEditing && !!department}
+          items={filteredCat}
+          loading={loadingCat}
+          onSelect={(o) => { setCategory(o); setCatEditing(false); setCatOpen(false); emit(department, o, null); }}
+          onAdd={department && catQuery.trim() ? addNewCategory : undefined}
+          emptyAddLabel={`Add “${catQuery.trim()}”`}
+        />
+      </div>
 
       {/* Sub-category */}
-      <Box label="Sub-category" required={!!requiredLevels.subcategory}>
-        <div className="relative">
-          <input
-            ref={subRef}
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={disabled || !category}
-            value={subcategory ? subcategory.name : subQuery}
-            onChange={(e) => setSubQuery(e.target.value)}
-            onBlur={keepFocus(subRef)}
-            placeholder={category ? "Search or type to add…" : "Select a category first"}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
-          />
-          <List
-            items={subcategory || !category ? [] : filteredSub}
-            loading={loadingSub}
-            onSelect={(o) => {
-              setSubcategory(o);
-              emit(department, category, o);
-            }}
-            onAdd={category && subQuery.trim() ? addNewSubcategory : undefined}
-            emptyAddLabel={`Add “${subQuery.trim()}”`}
-          />
-        </div>
-      </Box>
+      <div className="relative">
+        <Input
+          label="Sub-category"
+          required={!!requiredLevels.subcategory}
+          refEl={subRef}
+          disabled={disabled || !category}
+          valueText={subValue}
+          placeholder={category ? "Search or type to add…" : "Select a category first"}
+          onFocus={() => { if (category) { setSubEditing(true); setSubOpen(true); } }}
+          onChange={(e) => {
+            setSubEditing(true);
+            setSubOpen(true);
+            setSubQuery(e.target.value);
+            if (subcategory) setSubcategory(null);
+          }}
+          onBlur={() => {
+            setTimeout(() => setSubOpen(false), 0);
+          }}
+        />
+        <List
+          open={subOpen && subEditing && !!category}
+          items={filteredSub}
+          loading={loadingSub}
+          onSelect={(o) => { setSubcategory(o); setSubEditing(false); setSubOpen(false); emit(department, category, o); }}
+          onAdd={category && subQuery.trim() ? addNewSubcategory : undefined}
+          emptyAddLabel={`Add “${subQuery.trim()}”`}
+        />
+      </div>
     </div>
   );
 }
