@@ -8,12 +8,6 @@ import {
   ensureSubcategory,
 } from "../db/taxonomy";
 
-/**
- * TaxonomyPicker — light theme + stable typing
- * - Department → Category → Sub-category
- * - Keeps a separate "editing" mode so typing never gets overridden by selection
- * - Dropdown opens only while the input is focused (no stray blur on first key)
- */
 export default function TaxonomyPicker({
   value,
   onChange,
@@ -26,27 +20,20 @@ export default function TaxonomyPicker({
   const [category, setCategory] = useState(value?.category ?? null);
   const [subcategory, setSubcategory] = useState(value?.subcategory ?? null);
 
-  // Queries (what the user is typing)
+  // Queries (typed text)
   const [deptQuery, setDeptQuery] = useState("");
   const [catQuery, setCatQuery] = useState("");
   const [subQuery, setSubQuery] = useState("");
 
-  // Is the user actively typing in this field?
+  // Editing flags (controls dropdown visibility)
   const [deptEditing, setDeptEditing] = useState(false);
   const [catEditing, setCatEditing] = useState(false);
   const [subEditing, setSubEditing] = useState(false);
 
-  // Dropdown open states
-  const [deptOpen, setDeptOpen] = useState(false);
-  const [catOpen, setCatOpen] = useState(false);
-  const [subOpen, setSubOpen] = useState(false);
-
-  // Options
+  // Options + loading
   const [deptOpts, setDeptOpts] = useState([]);
   const [catOpts, setCatOpts] = useState([]);
   const [subOpts, setSubOpts] = useState([]);
-
-  // Loading flags
   const [loadingDept, setLoadingDept] = useState(false);
   const [loadingCat, setLoadingCat] = useState(false);
   const [loadingSub, setLoadingSub] = useState(false);
@@ -56,6 +43,7 @@ export default function TaxonomyPicker({
   const catRef = useRef(null);
   const subRef = useRef(null);
 
+  // Emit to parent
   const emit = (d, c, s) =>
     onChange?.({
       department: d ? { id: d.id, name: d.name } : null,
@@ -63,7 +51,7 @@ export default function TaxonomyPicker({
       subcategory: s ? { id: s.id, name: s.name } : null,
     });
 
-  // Fetch lists
+  // Fetch lists (debounced by React state updates naturally)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -108,7 +96,7 @@ export default function TaxonomyPicker({
     return () => { alive = false; };
   }, [category?.id, subQuery]);
 
-  // External value (edit mode)
+  // External value (edit)
   useEffect(() => {
     if (value) {
       setDepartment(value.department ?? null);
@@ -118,14 +106,11 @@ export default function TaxonomyPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.department?.id, value?.category?.id, value?.subcategory?.id]);
 
-  // Clear children on parent change
+  // Clear children when parent changes
   useEffect(() => {
-    setCategory(null);
-    setSubcategory(null);
-    setCatQuery("");
-    setSubQuery("");
-    setCatEditing(false);
-    setSubEditing(false);
+    setCategory(null); setSubcategory(null);
+    setCatQuery(""); setSubQuery("");
+    setCatEditing(false); setSubEditing(false);
     emit(department, null, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [department?.id]);
@@ -138,7 +123,7 @@ export default function TaxonomyPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category?.id]);
 
-  // Client-side filters
+  // Client-side filters for instant feel
   const filteredDept = useMemo(
     () => (deptQuery ? deptOpts.filter(o => o.name.toLowerCase().includes(deptQuery.toLowerCase())) : deptOpts),
     [deptOpts, deptQuery]
@@ -152,14 +137,11 @@ export default function TaxonomyPicker({
     [subOpts, subQuery]
   );
 
-  // Add-new actions
+  // Add-new helpers
   const addNewDepartment = async () => {
     const name = deptQuery.trim(); if (!name) return;
     const row = await ensureDepartment(name);
-    setDepartment(row);
-    setDeptQuery("");
-    setDeptEditing(false);
-    setDeptOpen(false);
+    setDepartment(row); setDeptQuery(""); setDeptEditing(false);
     emit(row, null, null);
     requestAnimationFrame(() => deptRef.current?.focus());
   };
@@ -167,10 +149,7 @@ export default function TaxonomyPicker({
     if (!department?.id) return;
     const name = catQuery.trim(); if (!name) return;
     const row = await ensureCategory(department.id, name);
-    setCategory(row);
-    setCatQuery("");
-    setCatEditing(false);
-    setCatOpen(false);
+    setCategory(row); setCatQuery(""); setCatEditing(false);
     emit(department, row, null);
     requestAnimationFrame(() => catRef.current?.focus());
   };
@@ -178,15 +157,12 @@ export default function TaxonomyPicker({
     if (!category?.id) return;
     const name = subQuery.trim(); if (!name) return;
     const row = await ensureSubcategory(category.id, name);
-    setSubcategory(row);
-    setSubQuery("");
-    setSubEditing(false);
-    setSubOpen(false);
+    setSubcategory(row); setSubQuery(""); setSubEditing(false);
     emit(department, category, row);
     requestAnimationFrame(() => subRef.current?.focus());
   };
 
-  // Light dropdown; prevent focus steal
+  // Light dropdown; prevent focus steal by mouse
   const List = ({ open, items, onSelect, emptyAddLabel, onAdd, loading }) => {
     if (!open) return null;
     return (
@@ -212,8 +188,7 @@ export default function TaxonomyPicker({
           <div className="px-3 py-2 text-sm text-gray-500">
             No matches.
             {onAdd && (
-              <>
-                {" "}
+              <>{" "}
                 <button
                   type="button"
                   className="text-blue-600 underline hover:no-underline"
@@ -229,17 +204,10 @@ export default function TaxonomyPicker({
     );
   };
 
-  // Shared input component
+  // Shared input (no onBlur at all)
   const Input = ({
-    label,
-    required,
-    refEl,
-    disabled,
-    valueText,
-    placeholder,
-    onFocus,
-    onChange,
-    onBlur,
+    refEl, label, required, disabled, valueText, placeholder,
+    onFocus, onChange, onKeyDown,
   }) => (
     <div className="flex flex-col gap-1 w-full">
       <label className="text-sm font-medium text-gray-700">
@@ -254,15 +222,14 @@ export default function TaxonomyPicker({
         value={valueText}
         onFocus={onFocus}
         onChange={onChange}
-        onBlur={onBlur}
+        onKeyDown={onKeyDown}
         placeholder={placeholder}
         className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
       />
     </div>
   );
 
-  // Values shown in the inputs:
-  // If editing, show the query; otherwise show the selected name (or empty)
+  // Display values (editing shows query; otherwise selection text)
   const deptValue = deptEditing ? deptQuery : (department?.name ?? "");
   const catValue  = catEditing  ? catQuery  : (category?.name   ?? "");
   const subValue  = subEditing  ? subQuery  : (subcategory?.name ?? "");
@@ -272,29 +239,30 @@ export default function TaxonomyPicker({
       {/* Department */}
       <div className="relative">
         <Input
+          refEl={deptRef}
           label="Department"
           required={!!requiredLevels.department}
-          refEl={deptRef}
           disabled={disabled}
           valueText={deptValue}
           placeholder="Search or type to add…"
-          onFocus={() => { setDeptEditing(true); setDeptOpen(true); }}
+          onFocus={() => { setDeptEditing(true); }}
           onChange={(e) => {
             setDeptEditing(true);
-            setDeptOpen(true);
             setDeptQuery(e.target.value);
-            if (department) setDepartment(null); // switch to query mode
+            if (department) setDepartment(null);
           }}
-          onBlur={() => {
-            // close dropdown after click/selection completes
-            setTimeout(() => setDeptOpen(false), 0);
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setDeptEditing(false);
+            if (e.key === "Enter" && deptQuery.trim() && !filteredDept.length) {
+              e.preventDefault(); addNewDepartment();
+            }
           }}
         />
         <List
-          open={deptOpen && deptEditing}
+          open={deptEditing}
           items={filteredDept}
           loading={loadingDept}
-          onSelect={(o) => { setDepartment(o); setDeptEditing(false); setDeptOpen(false); emit(o, null, null); }}
+          onSelect={(o) => { setDepartment(o); setDeptEditing(false); emit(o, null, null); }}
           onAdd={deptQuery.trim() ? addNewDepartment : undefined}
           emptyAddLabel={`Add “${deptQuery.trim()}”`}
         />
@@ -303,28 +271,30 @@ export default function TaxonomyPicker({
       {/* Category */}
       <div className="relative">
         <Input
+          refEl={catRef}
           label="Category"
           required={!!requiredLevels.category}
-          refEl={catRef}
           disabled={disabled || !department}
           valueText={catValue}
           placeholder={department ? "Search or type to add…" : "Select a department first"}
-          onFocus={() => { if (department) { setCatEditing(true); setCatOpen(true); } }}
+          onFocus={() => { if (department) setCatEditing(true); }}
           onChange={(e) => {
             setCatEditing(true);
-            setCatOpen(true);
             setCatQuery(e.target.value);
             if (category) setCategory(null);
           }}
-          onBlur={() => {
-            setTimeout(() => setCatOpen(false), 0);
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setCatEditing(false);
+            if (e.key === "Enter" && catQuery.trim() && !filteredCat.length) {
+              e.preventDefault(); addNewCategory();
+            }
           }}
         />
         <List
-          open={catOpen && catEditing && !!department}
+          open={!!department && catEditing}
           items={filteredCat}
           loading={loadingCat}
-          onSelect={(o) => { setCategory(o); setCatEditing(false); setCatOpen(false); emit(department, o, null); }}
+          onSelect={(o) => { setCategory(o); setCatEditing(false); emit(department, o, null); }}
           onAdd={department && catQuery.trim() ? addNewCategory : undefined}
           emptyAddLabel={`Add “${catQuery.trim()}”`}
         />
@@ -333,28 +303,30 @@ export default function TaxonomyPicker({
       {/* Sub-category */}
       <div className="relative">
         <Input
+          refEl={subRef}
           label="Sub-category"
           required={!!requiredLevels.subcategory}
-          refEl={subRef}
           disabled={disabled || !category}
           valueText={subValue}
           placeholder={category ? "Search or type to add…" : "Select a category first"}
-          onFocus={() => { if (category) { setSubEditing(true); setSubOpen(true); } }}
+          onFocus={() => { if (category) setSubEditing(true); }}
           onChange={(e) => {
             setSubEditing(true);
-            setSubOpen(true);
             setSubQuery(e.target.value);
             if (subcategory) setSubcategory(null);
           }}
-          onBlur={() => {
-            setTimeout(() => setSubOpen(false), 0);
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setSubEditing(false);
+            if (e.key === "Enter" && subQuery.trim() && !filteredSub.length) {
+              e.preventDefault(); addNewSubcategory();
+            }
           }}
         />
         <List
-          open={subOpen && subEditing && !!category}
+          open={!!category && subEditing}
           items={filteredSub}
           loading={loadingSub}
-          onSelect={(o) => { setSubcategory(o); setSubEditing(false); setSubOpen(false); emit(department, category, o); }}
+          onSelect={(o) => { setSubcategory(o); setSubEditing(false); emit(department, category, o); }}
           onAdd={category && subQuery.trim() ? addNewSubcategory : undefined}
           emptyAddLabel={`Add “${subQuery.trim()}”`}
         />
