@@ -235,83 +235,82 @@ export default function TaxonomyPicker({
     </div>
   );
 
-  return (
+    return (
     <div className={`grid grid-cols-1 md:grid-cols-3 gap-4 ${className}`}>
-      {/* Department */}
-      <Box label="Department" required={!!requiredLevels.department}>
+        {/* Department */}
+        <Box label="Department" required={!!requiredLevels.department}>
         <div className="relative">
-          <input
+            <input
             type="text"
             disabled={disabled}
             value={department ? department.name : deptQuery}
             onChange={(e) => {
-              setDepartment(null); // typing means we’re searching
-              setDeptQuery(e.target.value);
+                setDepartment(null);
+                setDeptQuery(e.target.value);
             }}
             placeholder="Search or type to add…"
-            className="w-full rounded-xl border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {/* options */}
-          <List
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <List
             items={department ? [] : filteredDept}
             loading={loadingDept}
             onSelect={(o) => setDepartment(o)}
             onAdd={deptQuery.trim() ? addNewDepartment : undefined}
             emptyAddLabel={`Add “${deptQuery.trim()}”`}
-          />
+            />
         </div>
-      </Box>
+        </Box>
 
-      {/* Category */}
-      <Box label="Category" required={!!requiredLevels.category}>
+        {/* Category */}
+        <Box label="Category" required={!!requiredLevels.category}>
         <div className="relative">
-          <input
+            <input
             type="text"
             disabled={disabled || !department}
             value={category ? category.name : catQuery}
             onChange={(e) => {
-              setCategory(null);
-              setCatQuery(e.target.value);
+                setCategory(null);
+                setCatQuery(e.target.value);
             }}
             placeholder={department ? "Search or type to add…" : "Select a department first"}
-            className="w-full rounded-xl border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
-          />
-          <List
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
+            />
+            <List
             items={category || !department ? [] : filteredCat}
             loading={loadingCat}
             onSelect={(o) => setCategory(o)}
             onAdd={department && catQuery.trim() ? addNewCategory : undefined}
             emptyAddLabel={`Add “${catQuery.trim()}”`}
-          />
+            />
         </div>
-      </Box>
+        </Box>
 
-      {/* Sub-category */}
-      <Box label="Sub-category" required={!!requiredLevels.subcategory}>
+        {/* Sub-category */}
+        <Box label="Sub-category" required={!!requiredLevels.subcategory}>
         <div className="relative">
-          <input
+            <input
             type="text"
             disabled={disabled || !category}
             value={subcategory ? subcategory.name : subQuery}
             onChange={(e) => {
-              setSubcategory(null);
-              setSubQuery(e.target.value);
+                setSubcategory(null);
+                setSubQuery(e.target.value);
             }}
             placeholder={category ? "Search or type to add…" : "Select a category first"}
-            className="w-full rounded-xl border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
-          />
-          <List
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-50 focus:ring-2 focus:ring-blue-500"
+            />
+            <List
             items={subcategory || !category ? [] : filteredSub}
             loading={loadingSub}
             onSelect={(o) => {
-              setSubcategory(o);
-              emit(department, category, o);
+                setSubcategory(o);
+                emit(department, category, o);
             }}
             onAdd={category && subQuery.trim() ? addNewSubcategory : undefined}
             emptyAddLabel={`Add “${subQuery.trim()}”`}
-          />
+            />
         </div>
-      </Box>
+        </Box>
     </div>
-  );
+    );
 }
