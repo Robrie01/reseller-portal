@@ -246,8 +246,7 @@ export default function TaxonomyPicker({
             type="text"
             disabled={disabled}
             value={department ? department.name : deptQuery}
-            onChange={(e) => {
-                setDepartment(null);
+            onChange={(e) => {                
                 setDeptQuery(e.target.value);
             }}
             placeholder="Search or type to add…"
@@ -271,7 +270,6 @@ export default function TaxonomyPicker({
             disabled={disabled || !department}
             value={category ? category.name : catQuery}
             onChange={(e) => {
-                setCategory(null);
                 setCatQuery(e.target.value);
             }}
             placeholder={department ? "Search or type to add…" : "Select a department first"}
@@ -295,7 +293,6 @@ export default function TaxonomyPicker({
             disabled={disabled || !category}
             value={subcategory ? subcategory.name : subQuery}
             onChange={(e) => {
-                setSubcategory(null);
                 setSubQuery(e.target.value);
             }}
             placeholder={category ? "Search or type to add…" : "Select a category first"}
