@@ -40,9 +40,10 @@ export async function addInventoryFull(v) {
     user_id: userId,
     title: v.title,
     vendor: v.vendor || null,
-    department: v.department || null,
-    category: v.category || null,
-    sub_category: v.subcategory || null,
+    // taxonomy IDs from TaxonomyPicker
+    department_id: v.department_id || null,
+    category_id: v.category_id || null,
+    subcategory_id: v.subcategory_id || null,
     brand: v.brand || null,
     location: v.location || null,
     sku: v.sku || null,

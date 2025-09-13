@@ -13,6 +13,7 @@ import { addSale } from "./db/sales";
 import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
+import TaxonomyPicker from "./Components/TaxonomyPicker";
 
 // ---------- tiny helpers ----------
 const baseInput =
@@ -1172,11 +1173,19 @@ function AddInventory() {
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState({});
 
+  // NEW: hold taxonomy IDs coming from TaxonomyPicker
+  const [tax, setTax] = useState({
+    department_id: null,
+    category_id: null,
+    subcategory_id: null,
+  });
+
   const get = (id) => document.getElementById(id);
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase.from("inventory")
+    const { data } = await supabase
+      .from("inventory")
       .select("id, title, vendor, purchase_price, quantity_on_hand, receipt_path, created_at")
       .order("created_at", { ascending: false });
     setRows(data || []);
@@ -1213,9 +1222,10 @@ function AddInventory() {
       const values = {
         title: get("inv-title").value,
         vendor: get("inv-vendor").value,
-        department: get("inv-department").value,
-        category: get("inv-category").value,
-        subcategory: get("inv-subcategory").value,
+        // ✨ taxonomy now uses IDs from the picker
+        department_id: tax.department_id,
+        category_id: tax.category_id,
+        subcategory_id: tax.subcategory_id,
         brand: get("inv-brand").value,
         location: get("inv-location").value,
         sku: get("inv-sku").value,
@@ -1226,16 +1236,18 @@ function AddInventory() {
         notes: get("inv-notes").value,
         receiptFile: get("inv-receipt").files?.[0] || null,
       };
+
       const { addInventoryFull } = await import("./db/inventory.js");
       await addInventoryFull(values);
 
       alert("Inventory item saved!");
       await load();
+
       if (closeAfter) {
         setOpen(false);
       } else {
+        // clear fields for next entry
         get("inv-title").value = "";
-        get("inv-subcategory").value = "";
         get("inv-brand").value = "";
         get("inv-location").value = "";
         get("inv-sku").value = "";
@@ -1244,6 +1256,9 @@ function AddInventory() {
         get("inv-qty").value = 1;
         get("inv-notes").value = "";
         if (get("inv-receipt")) get("inv-receipt").value = "";
+
+        // reset taxonomy picker
+        setTax({ department_id: null, category_id: null, subcategory_id: null });
       }
     } catch (err) {
       console.error(err);
@@ -1255,18 +1270,31 @@ function AddInventory() {
 
   return (
     <div className="space-y-4">
-      <Card title="Add Inventory" right={<Button onClick={() => setOpen(true)} className="bg-[#2f6b8f] text-white flex items-center gap-2"><Plus size={16} /> Open Form</Button>}>
+      <Card
+        title="Add Inventory"
+        right={
+          <Button onClick={() => setOpen(true)} className="bg-[#2f6b8f] text-white flex items-center gap-2">
+            <Plus size={16} /> Open Form
+          </Button>
+        }
+      >
         <p className="text-slate-700">Add a new item to inventory.</p>
       </Card>
 
       <Card
         title="Your Inventory"
-        right={<div className="flex items-center gap-3 text-sm text-slate-500">
-          {loading ? "Loading..." : `${rows.length} row(s)`}
-          <select className="border rounded-lg px-2 py-1" value={pageSize} onChange={(e)=>{setPageSize(Number(e.target.value)); setPage(1);}}>
-            <option>5</option><option>10</option><option>25</option>
-          </select>
-        </div>}
+        right={
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            {loading ? "Loading..." : `${rows.length} row(s)`}
+            <select
+              className="border rounded-lg px-2 py-1"
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+            >
+              <option>5</option><option>10</option><option>25</option>
+            </select>
+          </div>
+        }
       >
         <div className="overflow-auto">
           <table className="min-w-full text-sm">
@@ -1281,19 +1309,50 @@ function AddInventory() {
               </tr>
             </thead>
             <tbody>
-              {viewRows.length === 0 && (<tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No inventory</td></tr>)}
+              {viewRows.length === 0 && (
+                <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No inventory</td></tr>
+              )}
               {viewRows.map((r) => {
                 const isEdit = editId === r.id;
                 return (
                   <tr key={r.id} className="border-t">
-                    <td className="px-3 py-2">{isEdit ? <input className={baseInput} value={edit.title||""} onChange={(e)=>setEdit({...edit, title:e.target.value})}/> : r.title}</td>
-                    <td className="px-3 py-2">{isEdit ? <input className={baseInput} value={edit.vendor||""} onChange={(e)=>setEdit({...edit, vendor:e.target.value})}/> : r.vendor}</td>
-                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.purchase_price||0} onChange={(e)=>setEdit({...edit, purchase_price:e.target.value})}/> : fmtMoney(r.purchase_price)}</td>
-                    <td className="px-3 py-2">{isEdit ? <input type="number" className={baseInput} value={edit.quantity_on_hand||0} onChange={(e)=>setEdit({...edit, quantity_on_hand:e.target.value})}/> : r.quantity_on_hand}</td>
-                    <td className="px-3 py-2">{r.receipt_path ? (<Button className="border" onClick={() => openReceipt(r.receipt_path)}>View</Button>) : (<span className="text-slate-400">—</span>)}</td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input className={baseInput} value={edit.title || ""} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
+                        : r.title}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input className={baseInput} value={edit.vendor || ""} onChange={(e) => setEdit({ ...edit, vendor: e.target.value })} />
+                        : r.vendor}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input type="number" className={baseInput} value={edit.purchase_price || 0} onChange={(e) => setEdit({ ...edit, purchase_price: e.target.value })} />
+                        : fmtMoney(r.purchase_price)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEdit
+                        ? <input type="number" className={baseInput} value={edit.quantity_on_hand || 0} onChange={(e) => setEdit({ ...edit, quantity_on_hand: e.target.value })} />
+                        : r.quantity_on_hand}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.receipt_path ? (
+                        <Button className="border" onClick={() => openReceipt(r.receipt_path)}>View</Button>
+                      ) : (<span className="text-slate-400">—</span>)}
+                    </td>
                     <td className="px-3 py-2 text-right flex gap-2 justify-end">
-                      {isEdit ? (<><IconBtn title="Save" onClick={saveEdit}><Save size={16}/></IconBtn><IconBtn title="Cancel" onClick={cancelEdit}><X size={16}/></IconBtn></>)
-                        : (<><IconBtn title="Edit" onClick={() => startEdit(r)}><Pencil size={16}/></IconBtn><IconBtn title="Delete" onClick={() => handleDelete(r)}><Trash2 size={16}/></IconBtn></>)}
+                      {isEdit ? (
+                        <>
+                          <IconBtn title="Save" onClick={saveEdit}><Save size={16} /></IconBtn>
+                          <IconBtn title="Cancel" onClick={cancelEdit}><X size={16} /></IconBtn>
+                        </>
+                      ) : (
+                        <>
+                          <IconBtn title="Edit" onClick={() => startEdit(r)}><Pencil size={16} /></IconBtn>
+                          <IconBtn title="Delete" onClick={() => handleDelete(r)}><Trash2 size={16} /></IconBtn>
+                        </>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1301,20 +1360,45 @@ function AddInventory() {
             </tbody>
           </table>
         </div>
-        <div className="mt-3 flex items-center justify-between"><Pager page={page} setPage={setPage} totalPages={totalPages} /></div>
+        <div className="mt-3 flex items-center justify-between">
+          <Pager page={page} setPage={setPage} totalPages={totalPages} />
+        </div>
       </Card>
 
       <Modal
-        open={open} onClose={() => setOpen(false)} title="Add Inventory"
-        footer={<><Button className="bg-slate-100" onClick={() => handleAdd(false)} disabled={saving}>{saving ? "Saving..." : "Add and Next"}</Button>
-          <Button className="bg-[#2f6b8f] text-white" onClick={() => handleAdd(true)} disabled={saving}>{saving ? "Saving..." : "Add"}</Button></>}
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Add Inventory"
+        footer={
+          <>
+            <Button className="bg-slate-100" onClick={() => handleAdd(false)} disabled={saving}>
+              {saving ? "Saving..." : "Add and Next"}
+            </Button>
+            <Button className="bg-[#2f6b8f] text-white" onClick={() => handleAdd(true)} disabled={saving}>
+              {saving ? "Saving..." : "Add"}
+            </Button>
+          </>
+        }
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <TextField label="Item Title" id="inv-title" required />
           <Select label="Vendor" id="inv-vendor" options={["No vendor", "Temu", "Amazon", "Wholesaler", "Other"]} />
-          <Select label="Department" id="inv-department" options={["General", "Electronics", "Clothing", "Other"]} />
-          <Select label="Category" id="inv-category" options={["Accessories", "Computers", "Parts", "Other"]} />
-          <TextField label="Sub category" id="inv-subcategory" />
+
+          {/* ✨ Cascading Department → Category → Sub-category */}
+          <div className="md:col-span-2">
+            <TaxonomyPicker
+              onChange={({ department, category, subcategory }) => {
+                setTax({
+                  department_id: department?.id ?? null,
+                  category_id: category?.id ?? null,
+                  subcategory_id: subcategory?.id ?? null,
+                });
+              }}
+              requiredLevels={{ department: true, category: true, subcategory: false }}
+            />
+          </div>
+
+          {/* removed old Department/Category/Subcategory inputs */}
           <TextField label="Brand" id="inv-brand" />
           <TextField label="Location" id="inv-location" />
           <TextField label="SKU" id="inv-sku" />
