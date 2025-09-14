@@ -31,8 +31,8 @@ import { addSale } from "./db/sales";
 import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
-import TaxonomyPicker from "./components/TaxonomyPicker";
-import SalePlatformSelect from "./components/SalePlatformSelect.jsx;
+import TaxonomyPicker from "./components/TaxonomyPicker.jsx";
+import SalePlatformSelect from "./components/SalePlatformSelect.jsx";
 import SettingsPage from "./pages/Settings.jsx";
 
 // ---------- tiny helpers ----------
