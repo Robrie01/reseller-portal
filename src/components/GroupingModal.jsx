@@ -1,47 +1,44 @@
+// src/components/GroupingModal.jsx
 import React, { useEffect, useState } from "react";
-import { listDepartments, listCategories, listSubcategories } from "../db/taxonomy";
-import { addGroupingByNames } from "../db/analytics";
+import { X } from "lucide-react";
+import TaxonomyPicker from "./TaxonomyPicker";
+import { addGroupingTriple, updateGroupingTriple } from "../db/analytics";
 
-export default function GroupingModal({ open, onClose, context = {} , onAdded }) {
-  // context can include: { departmentName, categoryName, subcategoryName }
-  const [step, setStep] = useState({ dep: context.departmentName || "", cat: context.categoryName || "", sub: context.subcategoryName || "" });
-
-  const [deps, setDeps] = useState([]);      const [depId, setDepId] = useState(null);
-  const [cats, setCats] = useState([]);      const [catId, setCatId] = useState(null);
-  const [subs, setSubs] = useState([]);      const [subId, setSubId] = useState(null);
-
+/**
+ * Props:
+ *  - open: boolean
+ *  - onClose: () => void
+ *  - onSaved: (row) => void         // called after add/edit succeeds
+ *  - initial?: { id?, department, category, subcategory } // if provided -> edit mode
+ */
+export default function GroupingModal({ open, onClose, onSaved, initial }) {
+  const isEdit = Boolean(initial?.id);
+  const [dep, setDep] = useState("");
+  const [cat, setCat] = useState("");
+  const [sub, setSub] = useState("");
+  const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    (async () => setDeps(await listDepartments()))();
-  }, [open]);
+    setError("");
+    setSaving(false);
+    setDep(initial?.department || "");
+    setCat(initial?.category || "");
+    setSub(initial?.subcategory || "");
+  }, [open, initial]);
 
-  useEffect(() => {
-    setCatId(null); setSubs([]); setSubId(null);
-    if (depId) (async () => setCats(await listCategories(depId)))();
-  }, [depId]);
-
-  useEffect(() => {
-    setSubId(null);
-    if (catId) (async () => setSubs(await listSubcategories(catId)))();
-  }, [catId]);
-
-  const canAdd = step.dep.trim() && step.cat.trim() && step.sub.trim();
-
-  async function handleAdd() {
-    if (!canAdd) return;
+  async function onSave() {
     try {
       setSaving(true);
-      const out = await addGroupingByNames({
-        departmentName: step.dep.trim(),
-        categoryName:   step.cat.trim(),
-        subcategoryName:step.sub.trim(),
-      });
-      onAdded?.(out);       // let callers refresh their pickers if they want
+      const payload = { department: dep, category: cat, subcategory: sub };
+      const row = isEdit
+        ? await updateGroupingTriple(initial.id, payload)
+        : await addGroupingTriple(payload);
+      onSaved?.(row);
       onClose?.();
     } catch (e) {
-      alert(e.message || e);
+      setError(e.message || "Could not save grouping.");
     } finally {
       setSaving(false);
     }
@@ -51,63 +48,41 @@ export default function GroupingModal({ open, onClose, context = {} , onAdded })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-[560px] rounded-xl bg-white p-5 shadow-xl">
-        <div className="text-lg font-semibold mb-4">Add Analytics Grouping</div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Department</label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              placeholder="Type or pick…"
-              value={step.dep}
-              onChange={(e)=>setStep(s=>({ ...s, dep: e.target.value }))}
-              list="dep-datalist"
-            />
-            <datalist id="dep-datalist">
-              {deps.map(d => <option key={d.id} value={d.name} onClick={()=>setDepId(d.id)} />)}
-            </datalist>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Category</label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              placeholder="Type or pick…"
-              value={step.cat}
-              onChange={(e)=>setStep(s=>({ ...s, cat: e.target.value }))}
-              list="cat-datalist"
-              disabled={!step.dep.trim()}
-            />
-            <datalist id="cat-datalist">
-              {cats.map(c => <option key={c.id} value={c.name} onClick={()=>setCatId(c.id)} />)}
-            </datalist>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Category</label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              placeholder="Type or pick…"
-              value={step.sub}
-              onChange={(e)=>setStep(s=>({ ...s, sub: e.target.value }))}
-              list="sub-datalist"
-              disabled={!step.cat.trim()}
-            />
-            <datalist id="sub-datalist">
-              {subs.map(su => <option key={su.id} value={su.name} onClick={()=>setSubId(su.id)} />)}
-            </datalist>
-          </div>
+      <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h3 className="text-base font-semibold">
+            {isEdit ? "Edit Analytics Grouping" : "Add Analytics Grouping"}
+          </h3>
+          <button className="p-1 rounded-md hover:bg-zinc-100" onClick={onClose} aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        <div className="mt-5 flex justify-end gap-2">
-          <button className="px-3 py-2 text-sm rounded-md border" onClick={onClose}>Cancel</button>
+        <div className="px-4 py-4 space-y-3">
+          <TaxonomyPicker
+            department={dep}
+            category={cat}
+            subcategory={sub}
+            onChange={({ department, category, subcategory }) => {
+              setDep(department);
+              setCat(category);
+              setSub(subcategory);
+            }}
+          />
+
+          {error && <div className="text-sm text-red-600">{error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+          <button className="rounded-md border border-zinc-300 px-3 py-2 text-sm" onClick={onClose}>
+            Cancel
+          </button>
           <button
-            className={`px-3 py-2 text-sm rounded-md ${canAdd ? "bg-[#2f6b8f] text-white" : "bg-gray-200 text-gray-500"} `}
-            disabled={!canAdd || saving}
-            onClick={handleAdd}
+            className="rounded-md bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
+            onClick={onSave}
+            disabled={saving}
           >
-            {saving ? "Adding…" : "Add"}
+            {isEdit ? "Save" : "Add"}
           </button>
         </div>
       </div>

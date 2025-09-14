@@ -1,64 +1,96 @@
+// src/db/analytics.js
 import { supabase } from "../lib/supabaseClient";
-import { ensureDepartment, ensureCategory, ensureSubcategory } from "./taxonomy";
 
+/** Get current user id (client-safe) */
 async function getUserId() {
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
-  const uid = data?.session?.user?.id;
-  if (!uid) throw new Error("Not signed in.");
-  return uid;
+  return data?.session?.user?.id || null;
 }
 
+/** Normalize any row into the triple we display */
+function norm(row) {
+  return {
+    id: row.id,
+    department: row.department ?? row.dep ?? row.dept ?? row.department_name ?? "",
+    category: row.category ?? row.cat ?? row.category_name ?? "",
+    subcategory: row.subcategory ?? row.sub_cat ?? row.subcategory_name ?? "",
+  };
+}
+
+/** List groupings for the current user (ordered nicely) */
 export async function listGroupings() {
-  const uid = await getUserId();
   const { data, error } = await supabase
     .from("analytics_groupings")
-    .select(`
-      id, created_at,
-      departments:department_id(id,name),
-      categories:category_id(id,name),
-      subcategories:subcategory_id(id,name)
-    `)
-    .eq("user_id", uid)
-    .order("created_at", { ascending: false });
+    .select("id, department, category, subcategory")
+    .order("department", { ascending: true, nullsFirst: false })
+    .order("category", { ascending: true, nullsFirst: false })
+    .order("subcategory", { ascending: true, nullsFirst: false });
   if (error) throw error;
-  return (data || []).map(r => ({
-    id: r.id,
-    department: r.departments,
-    category: r.categories,
-    subcategory: r.subcategories,
-    created_at: r.created_at,
-  }));
+  return (data || []).map(norm);
 }
 
-export async function addGroupingByNames({ departmentName, categoryName, subcategoryName }) {
+/** Add a grouping (dept/category/subcategory). Prevent exact dupes (case-insensitive). */
+export async function addGroupingTriple({ department, category, subcategory }) {
   const uid = await getUserId();
+  if (!uid) throw new Error("Not signed in.");
 
-  // Ensure taxonomy rows exist (personal if missing)
-  const dept = await ensureDepartment(departmentName);
-  const cat  = await ensureCategory(dept.id, categoryName);
-  const sub  = await ensureSubcategory(cat.id, subcategoryName);
+  const dep = (department || "").trim();
+  const cat = (category || "").trim();
+  const sub = (subcategory || "").trim();
+  if (!dep) throw new Error("Department is required.");
+  if (!cat) throw new Error("Category is required.");
+  if (!sub) throw new Error("Sub-Category is required.");
 
-  // Upsert-like insert (unique index prevents dupes)
+  // de-dupe
+  const { data: existing, error: dupErr } = await supabase
+    .from("analytics_groupings")
+    .select("id, department, category, subcategory")
+    .ilike("department", dep)
+    .ilike("category", cat)
+    .ilike("subcategory", sub);
+  if (dupErr) throw dupErr;
+  if ((existing || []).length) throw new Error("That grouping already exists.");
+
   const { data, error } = await supabase
     .from("analytics_groupings")
-    .insert({ user_id: uid, department_id: dept.id, category_id: cat.id, subcategory_id: sub.id })
-    .select("id")
+    .insert([{ user_id: uid, department: dep, category: cat, subcategory: sub }])
+    .select("id, department, category, subcategory")
     .single();
-
-  if (error && !String(error.message || "").includes("duplicate key value")) throw error;
-  return { id: data?.id, department: dept, category: cat, subcategory: sub };
+  if (error) throw error;
+  return norm(data);
 }
 
+/** Update an existing grouping */
+export async function updateGroupingTriple(id, { department, category, subcategory }) {
+  const dep = (department || "").trim();
+  const cat = (category || "").trim();
+  const sub = (subcategory || "").trim();
+  if (!dep || !cat || !sub) throw new Error("All fields are required.");
+
+  // de-dupe excluding self
+  const { data: existing, error: dupErr } = await supabase
+    .from("analytics_groupings")
+    .select("id, department, category, subcategory")
+    .ilike("department", dep)
+    .ilike("category", cat)
+    .ilike("subcategory", sub);
+  if (dupErr) throw dupErr;
+  if ((existing || []).some((r) => r.id !== id)) throw new Error("That grouping already exists.");
+
+  const { data, error } = await supabase
+    .from("analytics_groupings")
+    .update({ department: dep, category: cat, subcategory: sub })
+    .eq("id", id)
+    .select("id, department, category, subcategory")
+    .single();
+  if (error) throw error;
+  return norm(data);
+}
+
+/** Delete a grouping by id */
 export async function deleteGrouping(id) {
   const { error } = await supabase.from("analytics_groupings").delete().eq("id", id);
   if (error) throw error;
-}
-
-export async function updateGrouping(id, { departmentId, categoryId, subcategoryId }) {
-  const { error } = await supabase
-    .from("analytics_groupings")
-    .update({ department_id: departmentId, category_id: categoryId, subcategory_id: subcategoryId })
-    .eq("id", id);
-  if (error) throw error;
+  return true;
 }
