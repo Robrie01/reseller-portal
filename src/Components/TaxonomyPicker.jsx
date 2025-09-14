@@ -1,11 +1,10 @@
+// src/components/TaxonomyPicker.jsx
 import React, { useEffect, useState } from "react";
+import GroupingModal from "./GroupingModal";
 import {
   listDepartments,
   listCategories,
   listSubcategories,
-  ensureDepartment,
-  ensureCategory,
-  ensureSubcategory,
 } from "../db/taxonomy";
 
 /**
@@ -30,6 +29,10 @@ export default function TaxonomyPicker({
   const [loadingDept, setLoadingDept] = useState(false);
   const [loadingCat,  setLoadingCat]  = useState(false);
   const [loadingSub,  setLoadingSub]  = useState(false);
+
+  // Add-new modal
+  const [openGrouping, setOpenGrouping] = useState(false);
+  const [groupingCtx, setGroupingCtx] = useState({}); // { departmentName?, categoryName?, subcategoryName? }
 
   const emit = (d, c, s) => {
     onChange?.({
@@ -94,50 +97,27 @@ export default function TaxonomyPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.department?.id, value?.category?.id, value?.subcategory?.id]);
 
-  // Add-new handlers
-  async function handleAddDepartment() {
-    const name = window.prompt("New department name:");
-    if (!name || !name.trim()) return null;
-    const row = await ensureDepartment(name.trim());
-    const rows = await listDepartments();
-    setDeptOpts(rows ?? []);
-    setDepartment(row);
-    setCategory(null);
-    setSubcategory(null);
-    emit(row, null, null);
-    return row;
+  // Open modal helpers (prefill context based on where user clicked)
+  function openAddDepartment() {
+    setGroupingCtx({});
+    setOpenGrouping(true);
+  }
+  function openAddCategory() {
+    if (!department) return;
+    setGroupingCtx({ departmentName: department.name });
+    setOpenGrouping(true);
+  }
+  function openAddSubcategory() {
+    if (!department || !category) return;
+    setGroupingCtx({ departmentName: department.name, categoryName: category.name });
+    setOpenGrouping(true);
   }
 
-  async function handleAddCategory() {
-    if (!department?.id) return null;
-    const name = window.prompt(`New category for "${department.name}":`);
-    if (!name || !name.trim()) return null;
-    const row = await ensureCategory(department.id, name.trim());
-    const rows = await listCategories(department.id);
-    setCatOpts(rows ?? []);
-    setCategory(row);
-    setSubcategory(null);
-    emit(department, row, null);
-    return row;
-  }
-
-  async function handleAddSubcategory() {
-    if (!category?.id) return null;
-    const name = window.prompt(`New sub-category for "${category.name}":`);
-    if (!name || !name.trim()) return null;
-    const row = await ensureSubcategory(category.id, name.trim());
-    const rows = await listSubcategories(category.id);
-    setSubOpts(rows ?? []);
-    setSubcategory(row);
-    emit(department, category, row);
-    return row;
-  }
-
-  // OnChange handlers with special "__add__" value
+  // OnChange handlers (catch the "__add__" sentinel)
   async function onDeptChange(e) {
     const val = e.target.value;
     if (val === "__add__") {
-      await handleAddDepartment();
+      openAddDepartment();
       return;
     }
     const sel = val ? deptOpts.find(d => d.id === val) : null;
@@ -150,7 +130,7 @@ export default function TaxonomyPicker({
   async function onCatChange(e) {
     const val = e.target.value;
     if (val === "__add__") {
-      await handleAddCategory();
+      openAddCategory();
       return;
     }
     const sel = val ? catOpts.find(c => c.id === val) : null;
@@ -162,7 +142,7 @@ export default function TaxonomyPicker({
   async function onSubChange(e) {
     const val = e.target.value;
     if (val === "__add__") {
-      await handleAddSubcategory();
+      openAddSubcategory();
       return;
     }
     const sel = val ? subOpts.find(s => s.id === val) : null;
@@ -170,7 +150,7 @@ export default function TaxonomyPicker({
     emit(department, category, sel || null);
   }
 
-  // UI
+  // UI bits
   const Label = ({ children }) => <label className="text-sm font-medium text-gray-700">{children}</label>;
   const Select = (props) => (
     <select
@@ -234,6 +214,31 @@ export default function TaxonomyPicker({
           ))}
         </Select>
       </div>
+
+      {/* Add-Grouping modal */}
+      <GroupingModal
+        open={openGrouping}
+        context={groupingCtx}
+        onClose={() => setOpenGrouping(false)}
+        onAdded={async ({ department: d, category: c, subcategory: s }) => {
+          // Refresh and select newly added values
+          const dep = d || department;
+          const cat = c || category;
+          const sub = s || subcategory;
+
+          setDepartment(dep);
+          const cats = dep?.id ? await listCategories(dep.id) : [];
+          setCatOpts(cats);
+          setCategory(cat);
+
+          const subs = cat?.id ? await listSubcategories(cat.id) : [];
+          setSubOpts(subs);
+          setSubcategory(sub);
+
+          emit(dep, cat, sub);
+          setOpenGrouping(false);
+        }}
+      />
     </div>
   );
 }

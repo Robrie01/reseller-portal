@@ -6,7 +6,7 @@ import {
 import {
   Search,
   Bell,
-  Settings as SettingsIcon, // ✨ alias the icon
+  Settings as SettingsIcon, // 👈 alias the icon
   User as UserIcon,
   LogOut,
   Plus,
@@ -32,8 +32,9 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 import TaxonomyPicker from "./Components/TaxonomyPicker";
-// ✨ import the page using lowercase filename and alias it
-import SettingsPage from "./pages/settings.jsx";
+
+// ✅ import the settings page with CAPITAL S (Linux is case-sensitive)
+import SettingsPage from "./pages/Settings.jsx";
 
 // ---------- tiny helpers ----------
 const baseInput =
@@ -292,6 +293,7 @@ function Dashboard() {
 
     (async () => {
       try {
+        // Pull this year's five feeds (already filtered per-user by RLS)
         const [salesRes, refundsRes, expensesRes, rebatesRes, inventoryRes] = await Promise.all([
           supabase.from("feed_sales").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
           supabase.from("feed_refunds").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
@@ -302,10 +304,11 @@ function Dashboard() {
 
         const sales = salesRes.data || [];
         const refunds = refundsRes.data || [];
-        const opEx = expensesRes.data || [];
-        const rebates = rebatesRes.data || [];
-        const cogs = inventoryRes.data || [];
+        const opEx = expensesRes.data || [];       // operating expenses (non-COGS)
+        const rebates = rebatesRes.data || [];     // supplier rebates (reduce op-ex)
+        const cogs = inventoryRes.data || [];      // inventory purchases (COGS)
 
+        // Bucket by month
         const buckets = {};
         const ensure = (d) => {
           const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
@@ -313,6 +316,7 @@ function Dashboard() {
           return buckets[key];
         };
 
+        // Income = sales - refunds
         for (const r of sales) {
           const d = new Date(r.txn_date);
           if (isNaN(d)) continue;
@@ -323,6 +327,8 @@ function Dashboard() {
           if (isNaN(d)) continue;
           ensure(d).income -= Number(r.amount || 0);
         }
+
+        // Operating expenses = expenses - rebates
         for (const r of opEx) {
           const d = new Date(r.txn_date);
           if (isNaN(d)) continue;
@@ -333,12 +339,15 @@ function Dashboard() {
           if (isNaN(d)) continue;
           ensure(d).opEx -= Number(r.amount || 0);
         }
+
+        // COGS (inventory purchases)
         for (const r of cogs) {
           const d = new Date(r.txn_date);
           if (isNaN(d)) continue;
           ensure(d).cogs += Number(r.amount || 0);
         }
 
+        // Build 12 months in order
         const arr = Array.from({ length: 12 }, (_, i) => {
           const k = `${y}/${i + 1}`;
           const b = buckets[k] || { income: 0, opEx: 0, cogs: 0 };
@@ -368,12 +377,12 @@ function Dashboard() {
 
   const totals = series.reduce((acc, r) => {
     acc.income += r.income || 0;
-    acc.opEx += r.opEx || 0;
-    acc.cogs += r.cogs || 0;
+    acc.opEx  += r.opEx  || 0;
+    acc.cogs  += r.cogs  || 0;
     return acc;
   }, { income: 0, opEx: 0, cogs: 0 });
-
-  const expensesTotal = totals.opEx + totals.cogs;
+    
+  const expensesTotal = totals.opEx + totals.cogs; 
   const profit = totals.income - expensesTotal;
   const margin = totals.income ? (profit / totals.income) * 100 : 0;
 
@@ -2145,7 +2154,7 @@ const PAGES = {
   "Add Expense": AddExpense,
   "Add Rebate/Refund": AddRebateRefund,
   Integrations: Integrations,
-  Settings: SettingsPage, // ✨ use the page alias here
+  // ❌ Removed "Settings" from the left-nav pages (we open it as a modal)
 };
 
 function iconFor(name) {
@@ -2165,7 +2174,7 @@ function iconFor(name) {
     case "Add Expense":
       return Receipt;
     case "Add Rebate/Refund":
-      return RotateCcw;
+      return RotateCcw; 
     case "Integrations":
       return LinkIcon;
     default:
@@ -2187,9 +2196,7 @@ function PageHeader({ name }) {
         {quickRanges.map((r) => (
           <button
             key={r}
-            className={`px-3 py-2 rounded-xl text-sm border border-slate-200 ${
-              r === "Current year" ? "bg-[#1f4e6b] text-white" : "bg-white"
-            }`}
+            className={`px-3 py-2 rounded-xl text-sm border border-slate-200 ${r === "Current year" ? "bg-[#1f4e6b] text-white" : "bg-white"}`}
           >
             {r}
           </button>
@@ -2204,7 +2211,6 @@ export default function AdminApp() {
   const [showSettings, setShowSettings] = useState(false);
   const PageComp = PAGES[page];
 
-  // keep your original sanity check
   useEffect(() => {
     console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL);
     supabase
@@ -2246,18 +2252,14 @@ export default function AdminApp() {
       </main>
 
       {/* SETTINGS OVERLAY */}
-      <Modal
-        open={showSettings}
-        onClose={() => setShowSettings(false)}
-        title="Settings"
-      >
+      <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Settings">
         <SettingsPage />
       </Modal>
     </div>
   );
 }
 
-/** ---- Modal (kept at bottom to avoid scroll noise) ---- */
+/** ---- Modal ---- */
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
   return (
@@ -2271,18 +2273,7 @@ function Modal({ open, onClose, title, children, footer }) {
         </div>
         <div className="p-4">{children}</div>
         <div className="border-t px-4 py-3 flex items-center justify-end gap-2">
-          {footer ? (
-            footer
-          ) : (
-            <>
-              <Button className="bg-slate-100" onClick={onClose}>
-                Add and Next
-              </Button>
-              <Button className="bg-[#2f6b8f] text-white" onClick={onClose}>
-                Add
-              </Button>
-            </>
-          )}
+          {footer ? footer : null}
         </div>
       </div>
     </div>
