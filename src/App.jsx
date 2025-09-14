@@ -32,7 +32,7 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 import TaxonomyPicker from "./components/TaxonomyPicker";
-import SalePlatformSelect from "./components/SalePlatformSelect";
+import SalePlatformSelect from "./components/SalePlatformSelect.jsx;
 import SettingsPage from "./pages/Settings.jsx";
 
 // ---------- tiny helpers ----------
