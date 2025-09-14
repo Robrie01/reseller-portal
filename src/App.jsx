@@ -14,7 +14,7 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 import TaxonomyPicker from "./Components/TaxonomyPicker";
-import Settings from "./pages/settings";
+import SettingsPage from "./pages/settings";
 
 // ---------- tiny helpers ----------
 const baseInput =
@@ -2221,7 +2221,7 @@ export default function AdminApp() {
         onClose={() => setShowSettings(false)}
         title="Settings"
       >
-        <Settings />
+        <SettingsPage />
       </Modal>
     </div>
   );
