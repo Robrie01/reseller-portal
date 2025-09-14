@@ -2,12 +2,8 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-// Analytics groupings
-import {
-  listGroupings,
-  deleteGrouping,
-  updateGrouping,
-} from "../db/analytics";
+// Analytics groupings (triple-based)
+import { listGroupings, deleteGrouping } from "../db/analytics";
 import GroupingModal from "../components/GroupingModal";
 
 // Sales platforms
@@ -31,30 +27,16 @@ export default function Settings() {
   const [editingPlatformId, setEditingPlatformId] = useState(null);
   const [editingPlatformName, setEditingPlatformName] = useState("");
 
-  // Analytics groupings
+  // Analytics groupings (table shows dept/category/subcategory)
   const [groupings, setGroupings] = useState([]);
-  const [groupingModalOpen, setGroupingModalOpen] = useState(false);
-  const [editingGroupingId, setEditingGroupingId] = useState(null);
-  const [editingGroupingName, setEditingGroupingName] = useState("");
+  // boolean OR object {mode:'add'|'edit', row?:...}; we’ll use object when opening
   const [groupingModalOpen, setGroupingModalOpen] = useState(false);
 
-  async function removeGrouping(id) {
-    if (!confirm("Delete this grouping?")) return;
-    try {
-      await deleteGrouping(id);
-      const rows = await listGroupings();
-      setGroupings(rows || []);
-    } catch (e) {
-      alert(e.message || "Could not delete grouping");
-    }
-  }
-  
   // ---- Loaders ----
   async function loadProfile() {
     const { data } = await supabase.auth.getUser();
     setUser(data?.user || null);
   }
-
   async function loadPlatforms() {
     setLoadingPlatforms(true);
     try {
@@ -64,7 +46,6 @@ export default function Settings() {
       setLoadingPlatforms(false);
     }
   }
-
   async function loadGroupings() {
     try {
       const rows = await listGroupings();
@@ -73,11 +54,9 @@ export default function Settings() {
       console.error("Failed to load analytics groupings:", e);
     }
   }
-
   async function loadAll() {
     await Promise.all([loadProfile(), loadPlatforms(), loadGroupings()]);
   }
-
   useEffect(() => {
     loadAll();
   }, []);
@@ -87,7 +66,6 @@ export default function Settings() {
     setEditingPlatformId(row.id);
     setEditingPlatformName(row.name);
   }
-
   async function saveEditPlatform() {
     const name = (editingPlatformName || "").trim();
     if (!name || !editingPlatformId) return;
@@ -100,7 +78,6 @@ export default function Settings() {
       alert(e.message || "Could not update platform");
     }
   }
-
   async function removePlatform(id) {
     if (!id) return;
     if (!confirm("Delete this platform?")) return;
@@ -113,30 +90,12 @@ export default function Settings() {
   }
 
   // ---- Analytics Groupings actions ----
-  function startEditGrouping(row) {
-    const display = row.name || row.grouping || row.title || row.label || "";
-    setEditingGroupingId(row.id);
-    setEditingGroupingName(display);
-  }
-
-  async function saveEditGrouping() {
-    const v = (editingGroupingName || "").trim();
-    if (!v || !editingGroupingId) return;
-    try {
-      await updateGrouping(editingGroupingId, v);
-      setEditingGroupingId(null);
-      setEditingGroupingName("");
-      await loadGroupings();
-    } catch (e) {
-      alert(e.message || "Could not update grouping");
-    }
-  }
-
-  async function removeGrouping(id) {
+  async function removeGroupingRow(id) {
     if (!confirm("Delete this grouping?")) return;
     try {
       await deleteGrouping(id);
-      await loadGroupings();
+      const rows = await listGroupings();
+      setGroupings(rows || []);
     } catch (e) {
       alert(e.message || "Could not delete grouping");
     }
@@ -278,77 +237,91 @@ export default function Settings() {
         </div>
       </section>
 
-{/* Analytics Groupings */}
-<section className="bg-white rounded-xl border border-zinc-200 p-4">
-  <div className="flex items-center justify-between mb-3">
-    <h2 className="text-sm font-semibold text-zinc-700">Analytics Groupings</h2>
-    <button
-      className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-1.5 text-sm"
-      onClick={() => setGroupingModalOpen({ mode: "add" })}
-    >
-      <Plus className="w-4 h-4" />
-      Add Grouping
-    </button>
-  </div>
+      {/* Analytics Groupings */}
+      <section className="bg-white rounded-xl border border-zinc-200 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-zinc-700">Analytics Groupings</h2>
+          <button
+            className="inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-1.5 text-sm"
+            onClick={() => setGroupingModalOpen({ mode: "add" })}
+          >
+            <Plus className="w-4 h-4" />
+            Add Grouping
+          </button>
+        </div>
 
-  <div className="overflow-hidden rounded-lg border border-zinc-200">
-    <table className="w-full text-sm">
-      <thead className="bg-zinc-50 text-zinc-600">
-        <tr>
-          <th className="text-left px-3 py-2">Department</th>
-          <th className="text-left px-3 py-2">Category</th>
-          <th className="text-left px-3 py-2">Sub-Category</th>
-          <th className="w-24 text-right px-3 py-2">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {groupings.length === 0 ? (
-          <tr>
-            <td className="px-3 py-8 text-center text-zinc-400" colSpan={4}>
-              No rows
-            </td>
-          </tr>
-        ) : (
-          groupings.map((g) => (
-            <tr key={g.id} className="border-t border-zinc-100">
-              <td className="px-3 py-2">{g.department}</td>
-              <td className="px-3 py-2">{g.category}</td>
-              <td className="px-3 py-2">{g.subcategory}</td>
-              <td className="px-3 py-2">
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    className="p-1 rounded-md border border-zinc-200"
-                    title="Edit"
-                    onClick={() => setGroupingModalOpen({ mode: "edit", row: g })}
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    className="p-1 rounded-md border border-zinc-200"
-                    title="Delete"
-                    onClick={() => removeGrouping(g.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
-  </div>
-</section>
+        <div className="overflow-hidden rounded-lg border border-zinc-200">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 text-zinc-600">
+              <tr>
+                <th className="text-left px-3 py-2">Department</th>
+                <th className="text-left px-3 py-2">Category</th>
+                <th className="text-left px-3 py-2">Sub-Category</th>
+                <th className="w-24 text-right px-3 py-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupings.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-8 text-center text-zinc-400" colSpan={4}>
+                    No rows
+                  </td>
+                </tr>
+              ) : (
+                groupings.map((g) => (
+                  <tr key={g.id} className="border-t border-zinc-100">
+                    <td className="px-3 py-2">{g.department}</td>
+                    <td className="px-3 py-2">{g.category}</td>
+                    <td className="px-3 py-2">{g.subcategory}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          className="p-1 rounded-md border border-zinc-200"
+                          title="Edit"
+                          onClick={() => setGroupingModalOpen({ mode: "edit", row: g })}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          className="p-1 rounded-md border border-zinc-200"
+                          title="Delete"
+                          onClick={() => removeGroupingRow(g.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-{/* Grouping Modal */}
-{groupingModalOpen && (
-  <GroupingModal
-    open={!!groupingModalOpen}
-    initial={groupingModalOpen.row}
-    onClose={() => setGroupingModalOpen(false)}
-    onSaved={async () => {
-      const rows = await listGroupings();
-      setGroupings(rows || []);
-    }}
-  />
-)}
+      {/* Modals */}
+      {groupingModalOpen && (
+        <GroupingModal
+          open={!!groupingModalOpen}
+          initial={groupingModalOpen.row}
+          onClose={() => setGroupingModalOpen(false)}
+          onSaved={async () => {
+            const rows = await listGroupings();
+            setGroupings(rows || []);
+          }}
+        />
+      )}
+
+      {spModalOpen && (
+        <SalePlatformModal
+          open={spModalOpen}
+          onClose={() => setSpModalOpen(false)}
+          onAdded={async () => {
+            const list = await listSalePlatforms();
+            setPlatforms(list || []);
+          }}
+        />
+      )}
+    </div>
+  );
+}
