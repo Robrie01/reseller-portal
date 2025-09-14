@@ -13,31 +13,28 @@ import { addGroupingTriple, updateGroupingTriple } from "../db/analytics";
 
 const inputCls =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200";
-const btnBase =
-  "rounded-md px-3 py-2 text-sm transition-colors";
-const overlay =
-  "fixed inset-0 bg-black/30 flex items-start justify-center p-4 z-50";
+const btnBase = "rounded-md px-3 py-2 text-sm transition-colors";
+const overlay = "fixed inset-0 bg-black/30 flex items-start justify-center p-4 z-50";
 
-// --- Small, local Combobox with typeahead + dropdown ---
+/* ────────────────────────────────────────────────────────────────────────────
+   Tiny ComboBox with typeahead filtering
+   -------------------------------------------------------------------------- */
 function ComboBox({
   label,
   valueText,
   setValueText,
-  items, // [{id, name}]
+  items,          // [{id, name}]
   disabled,
-  onPick, // (item) -> void   (sets current id + text)
+  onPick,         // (item) => void
   placeholder,
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
-  // filter items by typed text
   const filtered = useMemo(() => {
     const v = (valueText || "").trim().toLowerCase();
     if (!v) return items || [];
-    return (items || []).filter((it) =>
-      (it.name ?? "").toLowerCase().includes(v)
-    );
+    return (items || []).filter((it) => (it.name ?? "").toLowerCase().includes(v));
   }, [valueText, items]);
 
   useEffect(() => {
@@ -90,16 +87,17 @@ function ComboBox({
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   GroupingModal
+   -------------------------------------------------------------------------- */
 export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const isEdit = !!initial?.id;
 
-  // Text + explicit chosen ids when picking existing items
+  // Free-text shown in inputs + ids when an existing option is picked
   const [depText, setDepText] = useState("");
   const [depId, setDepId] = useState(null);
-
   const [catText, setCatText] = useState("");
   const [catId, setCatId] = useState(null);
-
   const [subText, setSubText] = useState("");
   const [subId, setSubId] = useState(null);
 
@@ -108,103 +106,104 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const [cats, setCats] = useState([]);
   const [subs, setSubs] = useState([]);
 
-  // Load departments on open
+  // helper: case-insensitive name match
+  const byName = (name) => (x) => (x.name || "").toLowerCase() === (name || "").toLowerCase();
+
+  /* Load departments when opened, and prefill from `initial` (works for add & edit).
+     If `initial.department` matches an existing dept, we set depId + depText,
+     otherwise we set just depText so it will be created on save. */
   useEffect(() => {
     if (!open) return;
     (async () => {
       const rows = await listDepartments();
-      setDeps(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
+      const list = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
+      setDeps(list);
+
+      // Reset everything
+      setDepId(null); setCatId(null); setSubId(null);
+      setCats([]); setSubs([]);
+
+      // Prefill text boxes
+      setDepText(initial?.department ?? (isEdit ? initial?.department : ""));
+      setCatText(initial?.category ?? (isEdit ? initial?.category : ""));
+      setSubText(initial?.subcategory ?? (isEdit ? initial?.subcategory : ""));
+
+      // Attempt to resolve department id if initial provided
+      if (initial?.department) {
+        const d = list.find(byName(initial.department));
+        if (d) { setDepId(d.id); setDepText(d.name); }
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Prefill when editing (names → text, ids resolved lazily as user interacts)
-  useEffect(() => {
-    if (!open) return;
-    if (isEdit) {
-      setDepText(initial?.department ?? "");
-      setCatText(initial?.category ?? "");
-      setSubText(initial?.subcategory ?? "");
-    } else {
-      setDepText("");
-      setCatText("");
-      setSubText("");
-    }
-    setDepId(null);
-    setCatId(null);
-    setSubId(null);
-    setCats([]);
-    setSubs([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isEdit]);
-
-  // When user picks an existing department (depId set), load its categories
+  /* When department id exists, load categories and try to preselect `initial.category`. */
   useEffect(() => {
     (async () => {
-      if (!depId) {
-        setCats([]);
-        setCatId(null);
-        return;
-      }
+      if (!depId) { setCats([]); setCatId(null); return; }
       const rows = await listCategories(depId);
-      setCats(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
+      const list = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
+      setCats(list);
+
+      if (initial?.category) {
+        const c = list.find(byName(initial.category));
+        if (c) { setCatId(c.id); setCatText(c.name); }
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depId]);
 
-  // When user picks an existing category (catId set), load its subcategories
+  /* When category id exists, load subcategories and try to preselect `initial.subcategory`. */
   useEffect(() => {
     (async () => {
-      if (!catId) {
-        setSubs([]);
-        setSubId(null);
-        return;
-      }
+      if (!catId) { setSubs([]); setSubId(null); return; }
       const rows = await listSubcategories(catId);
-      setSubs(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
+      const list = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
+      setSubs(list);
+
+      if (initial?.subcategory) {
+        const s = list.find(byName(initial.subcategory));
+        if (s) { setSubId(s.id); setSubText(s.name); }
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catId]);
 
-  // Picking existing items updates text + ids
+  // Picking existing options
   function onPickDep(it) {
     setDepId(it.id);
     setDepText(it.name);
-    // reset lower levels
-    setCatText("");
-    setCatId(null);
-    setSubText("");
-    setSubId(null);
+    setCatText(""); setCatId(null);
+    setSubText(""); setSubId(null);
   }
   function onPickCat(it) {
     setCatId(it.id);
     setCatText(it.name);
-    setSubText("");
-    setSubId(null);
+    setSubText(""); setSubId(null);
   }
   function onPickSub(it) {
     setSubId(it.id);
     setSubText(it.name);
   }
 
-  // If user types (not picked), clear ids so we treat as “new”
+  // If the user edits text after picking, clear ids (treat as new values)
   useEffect(() => {
-    // reset id when text no longer matches selected item’s name
     if (depId && deps.find((d) => d.id === depId)?.name !== depText) {
       setDepId(null);
-      setCats([]);
-      setCatId(null);
-      setSubId(null);
-      setSubText("");
+      setCats([]); setCatId(null);
+      setSubs([]); setSubId(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depText]);
+
   useEffect(() => {
     if (catId && cats.find((c) => c.id === catId)?.name !== catText) {
       setCatId(null);
-      setSubs([]);
-      setSubId(null);
-      setSubText("");
+      setSubs([]); setSubId(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catText]);
+
   useEffect(() => {
     if (subId && subs.find((s) => s.id === subId)?.name !== subText) {
       setSubId(null);
@@ -220,16 +219,12 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
   async function onSubmit() {
     if (!canSave) return;
 
-    // 1) ensure/create department
+    // Ensure/create hierarchy
     const finalDepId = depId ?? (await ensureDepartment(depText.trim()));
-    // 2) ensure/create category under department
-    const finalCatId =
-      catId ?? (await ensureCategory(finalDepId, catText.trim()));
-    // 3) ensure/create subcategory under category
-    const finalSubId =
-      subId ?? (await ensureSubcategory(finalCatId, subText.trim()));
+    const finalCatId = catId ?? (await ensureCategory(finalDepId, catText.trim()));
+    const finalSubId = subId ?? (await ensureSubcategory(finalCatId, subText.trim()));
+    void finalSubId; // not used directly below, but ensured
 
-    // The API for add/update works by names (what Reports expect).
     const payload = {
       department: depText.trim(),
       category: catText.trim(),
@@ -273,20 +268,20 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
               items={deps}
               disabled={false}
               onPick={onPickDep}
-              placeholder="Type or pick..."
+              placeholder="Type or pick…"
             />
             <ComboBox
               label="Category"
               valueText={catText}
               setValueText={setCatText}
               items={depId ? cats : []}
-              disabled={!depText.trim()} // allow typing even if not picked, but disable list until dep picked
+              disabled={!depText.trim()}
               onPick={onPickCat}
               placeholder={
                 depText.trim() && !depId
                   ? "New department — type a category"
                   : depId
-                  ? "Type or pick..."
+                  ? "Type or pick…"
                   : "Select/enter department first"
               }
             />
@@ -301,7 +296,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
                 catText.trim() && !catId
                   ? "New category — type a sub-category"
                   : catId
-                  ? "Type or pick..."
+                  ? "Type or pick…"
                   : "Select/enter category first"
               }
             />
