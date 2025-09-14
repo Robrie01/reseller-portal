@@ -31,7 +31,7 @@ import { addSale } from "./db/sales";
 import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
-import TaxonomyPicker from "./Components/TaxonomyPicker";
+import TaxonomyPicker from "./components/TaxonomyPicker";
 
 // ✅ import the settings page with CAPITAL S (Linux is case-sensitive)
 import SettingsPage from "./pages/Settings.jsx";
