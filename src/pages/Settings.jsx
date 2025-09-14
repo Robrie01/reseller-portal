@@ -2,111 +2,301 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { listGroupings, deleteGrouping } from "../db/analytics";
+import GroupingModal from "../components/GroupingModal";
+import { Pencil, Trash2, Plus } from "lucide-react";
+import {
+  listSalePlatforms,
+  addSalePlatform,
+  updateSalePlatform,
+  deleteSalePlatform,
+} from "../db/platforms";
 
-// ⬇️ IMPORTANT: Capital “C” and explicit .jsx extension
-import GroupingModal from "../Components/GroupingModal.jsx";
-
-export default function SettingsPage() {
+export default function Settings() {
   const [user, setUser] = useState(null);
-  const [rows, setRows] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [err, setErr] = useState("");
 
-  async function load() {
+  // Analytics Groupings (existing)
+  const [groupings, setGroupings] = useState([]);
+  const [groupingModalOpen, setGroupingModalOpen] = useState(false);
+
+  // Sales Platforms (new)
+  const [platforms, setPlatforms] = useState([]);
+  const [loadingPlatforms, setLoadingPlatforms] = useState(false);
+  const [newPlatform, setNewPlatform] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editingName, setEditingName] = useState("");
+
+  async function loadAll() {
+    const { data } = await supabase.auth.getUser();
+    setUser(data?.user || null);
+
+    // existing groupings
     try {
-      setErr("");
-      const { data, error: userErr } = await supabase.auth.getUser();
-      if (userErr) throw userErr;
-      setUser(data?.user || null);
-
-      const list = await listGroupings();
-      setRows(Array.isArray(list) ? list : []);
+      const rows = await listGroupings();
+      setGroupings(rows || []);
     } catch (e) {
-      console.error(e);
-      setErr(e?.message || "Failed to load settings.");
+      console.error("Failed to load analytics groupings:", e);
+    }
+
+    // new: sale platforms
+    setLoadingPlatforms(true);
+    try {
+      const list = await listSalePlatforms();
+      setPlatforms(list || []);
+    } catch (e) {
+      console.error("Failed to load sale platforms:", e);
+    } finally {
+      setLoadingPlatforms(false);
     }
   }
 
   useEffect(() => {
-    load();
+    loadAll();
   }, []);
 
-  async function handleDelete(id) {
-    if (!window.confirm("Delete this grouping?")) return;
+  // --- Sales Platforms actions ---
+  async function onAddPlatform() {
+    const name = newPlatform.trim();
+    if (!name) return;
+    try {
+      await addSalePlatform(name);
+      setNewPlatform("");
+      const list = await listSalePlatforms();
+      setPlatforms(list || []);
+    } catch (e) {
+      alert(e.message || "Could not add platform");
+    }
+  }
+
+  function startEditPlatform(row) {
+    setEditingId(row.id);
+    setEditingName(row.name);
+  }
+
+  async function saveEditPlatform() {
+    const name = (editingName || "").trim();
+    if (!name || !editingId) return;
+    try {
+      await updateSalePlatform(editingId, name);
+      setEditingId(null);
+      setEditingName("");
+      const list = await listSalePlatforms();
+      setPlatforms(list || []);
+    } catch (e) {
+      alert(e.message || "Could not update platform");
+    }
+  }
+
+  async function removePlatform(id) {
+    if (!id) return;
+    if (!confirm("Delete this platform?")) return;
+    try {
+      await deleteSalePlatform(id);
+      const list = await listSalePlatforms();
+      setPlatforms(list || []);
+    } catch (e) {
+      alert(e.message || "Could not delete platform");
+    }
+  }
+
+  // --- Analytics Groupings actions (existing minimal wiring) ---
+  async function removeGrouping(id) {
     try {
       await deleteGrouping(id);
-      setRows(prev => prev.filter(x => x.id !== id));
+      const rows = await listGroupings();
+      setGroupings(rows || []);
     } catch (e) {
-      alert(e?.message || "Delete failed.");
+      alert(e.message || "Could not delete grouping");
     }
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      <h1 className="text-2xl font-semibold">Settings</h1>
-
-      {err && (
-        <div className="rounded-xl border border-red-200 bg-red-50 text-red-700 px-3 py-2 text-sm">
-          {err}
-        </div>
-      )}
-
+    <div className="p-4 space-y-8">
       {/* Profile */}
-      <section className="rounded-xl border bg-white p-4">
-        <h2 className="text-lg font-medium mb-2">Profile</h2>
-        <div className="text-sm text-gray-700">
-          <div>
-            <span className="text-gray-500">Name:</span>{" "}
-            {user?.user_metadata?.name || "—"}
-          </div>
-          <div>
-            <span className="text-gray-500">Email:</span>{" "}
-            {user?.email || "—"}
-          </div>
+      <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+        <h2 className="text-sm font-semibold text-zinc-600 dark:text-zinc-300 mb-3">
+          Profile
+        </h2>
+        <div className="text-sm">
+          <div><span className="text-zinc-500">Name:</span> {user?.user_metadata?.name || "—"}</div>
+          <div><span className="text-zinc-500">Email:</span> {user?.email || "—"}</div>
         </div>
       </section>
 
-      {/* Analytics Groupings */}
-      <section className="rounded-xl border bg-white p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-medium">Analytics Groupings</h2>
-          <button
-            className="rounded-md bg-[#2f6b8f] text-white px-3 py-2 text-sm"
-            onClick={() => setOpen(true)}
-          >
-            Add
-          </button>
-        </div>
+      {/* Sales Platform (NEW) */}
+      <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+        <h2 className="text-sm font-semibold text-zinc-600 dark:text-zinc-300 mb-3">
+          Sales Platform
+        </h2>
 
-        <div className="overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
+        <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300">
               <tr>
-                <th className="px-3 py-2 text-left">Department</th>
-                <th className="px-3 py-2 text-left">Category</th>
-                <th className="px-3 py-2 text-left">Sub-Category</th>
-                <th className="px-3 py-2"></th>
+                <th className="text-left px-3 py-2">Platform Title</th>
+                <th className="w-24 text-right px-3 py-2">Remove</th>
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
+              {loadingPlatforms && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-gray-500">
-                    No groupings yet
+                  <td className="px-3 py-8 text-center text-zinc-400" colSpan={2}>
+                    Loading…
+                  </td>
+                </tr>
+              )}
+
+              {!loadingPlatforms && platforms.length === 0 && (
+                <tr>
+                  <td className="px-3 py-8 text-center text-zinc-400" colSpan={2}>
+                    No rows
+                  </td>
+                </tr>
+              )}
+
+              {!loadingPlatforms &&
+                platforms.map((row) => {
+                  const isEditing = editingId === row.id;
+                  const readOnly = !row.is_user_owned; // defaults are read-only
+                  return (
+                    <tr
+                      key={row.id}
+                      className="border-t border-zinc-100 dark:border-zinc-800"
+                    >
+                      <td className="px-3 py-2">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1"
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveEditPlatform();
+                                if (e.key === "Escape") {
+                                  setEditingId(null);
+                                  setEditingName("");
+                                }
+                              }}
+                            />
+                            <button
+                              className="px-3 py-1 rounded-md bg-zinc-900 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                              onClick={saveEditPlatform}
+                              title="Save"
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="px-3 py-1 rounded-md border border-zinc-300 dark:border-zinc-700"
+                              onClick={() => {
+                                setEditingId(null);
+                                setEditingName("");
+                              }}
+                              title="Cancel"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <span className={readOnly ? "text-zinc-700 dark:text-zinc-200" : ""}>
+                              {row.name}
+                              {readOnly && (
+                                <span className="ml-2 text-xs text-zinc-400">(default)</span>
+                              )}
+                            </span>
+                            {!readOnly && (
+                              <button
+                                className="p-1 rounded-md border border-zinc-200 dark:border-zinc-700"
+                                onClick={() => startEditPlatform(row)}
+                                title="Edit"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {!readOnly ? (
+                          <button
+                            className="p-1 rounded-md border border-zinc-200 dark:border-zinc-700"
+                            onClick={() => removePlatform(row.id)}
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <span className="text-zinc-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-3 flex gap-2">
+          <input
+            className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
+            placeholder="Add Sales platform"
+            value={newPlatform}
+            onChange={(e) => setNewPlatform(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onAddPlatform();
+            }}
+          />
+          <button
+            className="inline-flex items-center gap-2 rounded-md bg-green-600 text-white px-3 py-2 text-sm"
+            onClick={onAddPlatform}
+          >
+            <Plus className="w-4 h-4" />
+            Add
+          </button>
+        </div>
+      </section>
+
+      {/* Analytics Groupings (existing) */}
+      <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+            Analytics Groupings
+          </h2>
+          <button
+            className="inline-flex items-center gap-2 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm"
+            onClick={() => setGroupingModalOpen(true)}
+          >
+            <Plus className="w-4 h-4" />
+            Add Grouping
+          </button>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 dark:bg-zinc-800/50 text-zinc-600 dark:text-zinc-300">
+              <tr>
+                <th className="text-left px-3 py-2">Grouping</th>
+                <th className="w-24 text-right px-3 py-2">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupings.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-8 text-center text-zinc-400" colSpan={2}>
+                    No rows
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="px-3 py-2">{r.department?.name || "—"}</td>
-                    <td className="px-3 py-2">{r.category?.name || "—"}</td>
-                    <td className="px-3 py-2">{r.subcategory?.name || "—"}</td>
+                groupings.map((g) => (
+                  <tr key={g.id} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="px-3 py-2">{g.name}</td>
                     <td className="px-3 py-2 text-right">
                       <button
-                        className="text-red-600 hover:underline"
-                        onClick={() => handleDelete(r.id)}
+                        className="p-1 rounded-md border border-zinc-200 dark:border-zinc-700"
+                        onClick={() => removeGrouping(g.id)}
+                        title="Delete"
                       >
-                        Delete
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </td>
                   </tr>
@@ -117,15 +307,10 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <GroupingModal
-        open={open}
-        onClose={() => setOpen(false)}
-        onAdded={async () => {
-          setOpen(false);
-          const list = await listGroupings();
-          setRows(Array.isArray(list) ? list : []);
-        }}
-      />
+      {/* Modal for adding groupings (existing) */}
+      {groupingModalOpen && (
+        <GroupingModal open={groupingModalOpen} onClose={() => setGroupingModalOpen(false)} />
+      )}
     </div>
   );
 }
