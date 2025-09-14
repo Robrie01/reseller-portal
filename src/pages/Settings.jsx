@@ -1,71 +1,89 @@
 // src/pages/Settings.jsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { listGroupings, deleteGrouping } from "../db/analytics";
+
+// Analytics groupings
+import {
+  listGroupings,
+  deleteGrouping,
+  updateGrouping,
+} from "../db/analytics";
 import GroupingModal from "../components/GroupingModal";
-import SalePlatformModal from "../components/SalePlatformModal";
-import { Pencil, Trash2, Plus } from "lucide-react";
+
+// Sales platforms
 import {
   listSalePlatforms,
   updateSalePlatform,
   deleteSalePlatform,
 } from "../db/platforms";
+import SalePlatformModal from "../components/SalePlatformModal";
+
+import { Plus, Pencil, Trash2 } from "lucide-react";
 
 export default function Settings() {
+  // Profile
   const [user, setUser] = useState(null);
 
-  // Analytics Groupings
-  const [groupings, setGroupings] = useState([]);
-  const [groupingModalOpen, setGroupingModalOpen] = useState(false);
-
-  // Sales Platforms
+  // Sales platforms
   const [platforms, setPlatforms] = useState([]);
   const [loadingPlatforms, setLoadingPlatforms] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [editingName, setEditingName] = useState("");
   const [spModalOpen, setSpModalOpen] = useState(false);
+  const [editingPlatformId, setEditingPlatformId] = useState(null);
+  const [editingPlatformName, setEditingPlatformName] = useState("");
 
-  async function loadAll() {
+  // Analytics groupings
+  const [groupings, setGroupings] = useState([]);
+  const [groupingModalOpen, setGroupingModalOpen] = useState(false);
+  const [editingGroupingId, setEditingGroupingId] = useState(null);
+  const [editingGroupingName, setEditingGroupingName] = useState("");
+
+  // ---- Loaders ----
+  async function loadProfile() {
     const { data } = await supabase.auth.getUser();
     setUser(data?.user || null);
+  }
 
+  async function loadPlatforms() {
+    setLoadingPlatforms(true);
+    try {
+      const list = await listSalePlatforms();
+      setPlatforms(list || []);
+    } finally {
+      setLoadingPlatforms(false);
+    }
+  }
+
+  async function loadGroupings() {
     try {
       const rows = await listGroupings();
       setGroupings(rows || []);
     } catch (e) {
       console.error("Failed to load analytics groupings:", e);
     }
+  }
 
-    setLoadingPlatforms(true);
-    try {
-      const list = await listSalePlatforms();
-      setPlatforms(list || []);
-    } catch (e) {
-      console.error("Failed to load sale platforms:", e);
-    } finally {
-      setLoadingPlatforms(false);
-    }
+  async function loadAll() {
+    await Promise.all([loadProfile(), loadPlatforms(), loadGroupings()]);
   }
 
   useEffect(() => {
     loadAll();
   }, []);
 
-  // Sales Platforms actions
+  // ---- Sales Platforms actions ----
   function startEditPlatform(row) {
-    setEditingId(row.id);
-    setEditingName(row.name);
+    setEditingPlatformId(row.id);
+    setEditingPlatformName(row.name);
   }
 
   async function saveEditPlatform() {
-    const name = (editingName || "").trim();
-    if (!name || !editingId) return;
+    const name = (editingPlatformName || "").trim();
+    if (!name || !editingPlatformId) return;
     try {
-      await updateSalePlatform(editingId, name);
-      setEditingId(null);
-      setEditingName("");
-      const list = await listSalePlatforms();
-      setPlatforms(list || []);
+      await updateSalePlatform(editingPlatformId, name);
+      setEditingPlatformId(null);
+      setEditingPlatformName("");
+      await loadPlatforms();
     } catch (e) {
       alert(e.message || "Could not update platform");
     }
@@ -76,19 +94,37 @@ export default function Settings() {
     if (!confirm("Delete this platform?")) return;
     try {
       await deleteSalePlatform(id);
-      const list = await listSalePlatforms();
-      setPlatforms(list || []);
+      await loadPlatforms();
     } catch (e) {
       alert(e.message || "Could not delete platform");
     }
   }
 
-  // Analytics Groupings actions
+  // ---- Analytics Groupings actions ----
+  function startEditGrouping(row) {
+    const display = row.name || row.grouping || row.title || row.label || "";
+    setEditingGroupingId(row.id);
+    setEditingGroupingName(display);
+  }
+
+  async function saveEditGrouping() {
+    const v = (editingGroupingName || "").trim();
+    if (!v || !editingGroupingId) return;
+    try {
+      await updateGrouping(editingGroupingId, v);
+      setEditingGroupingId(null);
+      setEditingGroupingName("");
+      await loadGroupings();
+    } catch (e) {
+      alert(e.message || "Could not update grouping");
+    }
+  }
+
   async function removeGrouping(id) {
+    if (!confirm("Delete this grouping?")) return;
     try {
       await deleteGrouping(id);
-      const rows = await listGroupings();
-      setGroupings(rows || []);
+      await loadGroupings();
     } catch (e) {
       alert(e.message || "Could not delete grouping");
     }
@@ -100,12 +136,18 @@ export default function Settings() {
       <section className="bg-white rounded-xl border border-zinc-200 p-4">
         <h2 className="text-sm font-semibold text-zinc-700 mb-3">Profile</h2>
         <div className="text-sm">
-          <div><span className="text-zinc-500">Name:</span> {user?.user_metadata?.name || "—"}</div>
-          <div><span className="text-zinc-500">Email:</span> {user?.email || "—"}</div>
+          <div>
+            <span className="text-zinc-500">Name:</span>{" "}
+            {user?.user_metadata?.name || "—"}
+          </div>
+          <div>
+            <span className="text-zinc-500">Email:</span>{" "}
+            {user?.email || "—"}
+          </div>
         </div>
       </section>
 
-      {/* Sales Platform (modal-based) */}
+      {/* Sales Platform */}
       <section className="bg-white rounded-xl border border-zinc-200 p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-zinc-700">Sales Platform</h2>
@@ -145,7 +187,7 @@ export default function Settings() {
 
               {!loadingPlatforms &&
                 platforms.map((row) => {
-                  const isEditing = editingId === row.id;
+                  const isEditing = editingPlatformId === row.id;
                   const readOnly = !row.is_user_owned; // defaults are read-only
                   return (
                     <tr key={row.id} className="border-t border-zinc-100">
@@ -154,14 +196,14 @@ export default function Settings() {
                           <div className="flex items-center gap-2">
                             <input
                               className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1"
-                              value={editingName}
-                              onChange={(e) => setEditingName(e.target.value)}
+                              value={editingPlatformName}
+                              onChange={(e) => setEditingPlatformName(e.target.value)}
                               autoFocus
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") saveEditPlatform();
                                 if (e.key === "Escape") {
-                                  setEditingId(null);
-                                  setEditingName("");
+                                  setEditingPlatformId(null);
+                                  setEditingPlatformName("");
                                 }
                               }}
                             />
@@ -175,8 +217,8 @@ export default function Settings() {
                             <button
                               className="px-3 py-1 rounded-md border border-zinc-300"
                               onClick={() => {
-                                setEditingId(null);
-                                setEditingName("");
+                                setEditingPlatformId(null);
+                                setEditingPlatformName("");
                               }}
                               title="Cancel"
                             >
@@ -185,9 +227,9 @@ export default function Settings() {
                           </div>
                         ) : (
                           <div className="flex items-center justify-between">
-                            <span className={readOnly ? "text-zinc-800" : ""}>
+                            <span>
                               {row.name}
-                              {readOnly && (
+                              {!row.is_user_owned && (
                                 <span className="ml-2 text-xs text-zinc-400">(default)</span>
                               )}
                             </span>
@@ -253,20 +295,71 @@ export default function Settings() {
                   </td>
                 </tr>
               ) : (
-                groupings.map((g) => (
-                  <tr key={g.id} className="border-t border-zinc-100">
-                    <td className="px-3 py-2">{g.name}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        className="p-1 rounded-md border border-zinc-200"
-                        onClick={() => removeGrouping(g.id)}
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                groupings.map((g) => {
+                  const isEditing = editingGroupingId === g.id;
+                  const display =
+                    g.name || g.grouping || g.title || g.label || "—";
+                  return (
+                    <tr key={g.id} className="border-t border-zinc-100">
+                      <td className="px-3 py-2">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1"
+                              value={editingGroupingName}
+                              onChange={(e) => setEditingGroupingName(e.target.value)}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveEditGrouping();
+                                if (e.key === "Escape") {
+                                  setEditingGroupingId(null);
+                                  setEditingGroupingName("");
+                                }
+                              }}
+                            />
+                            <button
+                              className="px-3 py-1 rounded-md bg-zinc-900 text-white"
+                              onClick={saveEditGrouping}
+                              title="Save"
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="px-3 py-1 rounded-md border border-zinc-300"
+                              onClick={() => {
+                                setEditingGroupingId(null);
+                                setEditingGroupingName("");
+                              }}
+                              title="Cancel"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <span>{display}</span>
+                            <button
+                              className="p-1 rounded-md border border-zinc-200"
+                              onClick={() => startEditGrouping(g)}
+                              title="Edit"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          className="p-1 rounded-md border border-zinc-200"
+                          onClick={() => removeGrouping(g.id)}
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -275,7 +368,13 @@ export default function Settings() {
 
       {/* Modals */}
       {groupingModalOpen && (
-        <GroupingModal open={groupingModalOpen} onClose={() => setGroupingModalOpen(false)} />
+        <GroupingModal
+          open={groupingModalOpen}
+          onClose={() => setGroupingModalOpen(false)}
+          onAdded={async () => {
+            await loadGroupings();
+          }}
+        />
       )}
 
       {spModalOpen && (
@@ -283,8 +382,7 @@ export default function Settings() {
           open={spModalOpen}
           onClose={() => setSpModalOpen(false)}
           onAdded={async () => {
-            const list = await listSalePlatforms();
-            setPlatforms(list || []);
+            await loadPlatforms();
           }}
         />
       )}
