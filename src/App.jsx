@@ -32,8 +32,7 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 import TaxonomyPicker from "./components/TaxonomyPicker";
-
-// ✅ import the settings page with CAPITAL S (Linux is case-sensitive)
+import SalePlatformSelect from "./components/SalePlatformSelect";
 import SettingsPage from "./pages/Settings.jsx";
 
 // ---------- tiny helpers ----------
@@ -944,6 +943,7 @@ function TransactionDetails() {
   );
 }
 
+
 // ---------- Report Sale ----------
 function ReportSale() {
   const [open, setOpen] = useState(false);
@@ -952,6 +952,9 @@ function ReportSale() {
   const { sortKey, dir, onSort, page, setPage, pageSize, setPageSize, totalPages, rows: viewRows, resetPage } = useSortPage(rows);
   const [editId, setEditId] = useState(null);
   const [edit, setEdit] = useState({});
+
+  // NEW: controlled state for sale platform (replaces DOM getElementById for platform)
+  const [salePlatform, setSalePlatform] = useState(null); // e.g. "eBay" | null
 
   // Inventory suggestions
   const [invList, setInvList] = useState([]);
@@ -1135,17 +1138,22 @@ function ReportSale() {
               </div>
             )}
           </div>
+
           <input type="hidden" id="sale-inventory-id" />
+
           <TextField label="Sale Price (£)" id="sale-price" prefix="£" type="number" />
           <TextField label="Shipping Cost (£)" id="sale-ship" prefix="£" type="number" />
           <TextField label="Transaction Fees (£)" id="sale-fees" prefix="£" type="number" />
-          <Select label="Sale Platform" id="sale-platform" options={[
-            { label: "No Sale Platform", value: "" },
-            { label: "eBay", value: "ebay" },
-            { label: "Etsy", value: "etsy" },
-            { label: "Vinted", value: "vinted" },
-            { label: "Other", value: "other" },
-          ]} />
+
+          {/* NEW: unified platform picker with "Add Sales Platform…" modal */}
+          <div>
+            <span className={labelCls}>Sale Platform</span>
+            <SalePlatformSelect
+              value={salePlatform}
+              onChange={setSalePlatform}
+            />
+          </div>
+
           <DateField label="Sale Date" id="sale-date" />
           <TextField label="Purchase Price (£)" id="sale-buy" prefix="£" type="number" />
           <DateField label="Purchase Date" id="sale-buydate" />
@@ -1158,8 +1166,9 @@ function ReportSale() {
 
   async function save(closeAfter) {
     const get = (id) => document.getElementById(id);
-    const rawPlatform = get("sale-platform").value;
-    const platform = rawPlatform === "" ? null : rawPlatform;
+
+    // platform now comes from state (SalePlatformSelect)
+    const platform = salePlatform == null ? null : salePlatform;
 
     const values = {
       item: get("sale-item").value,
@@ -1174,6 +1183,7 @@ function ReportSale() {
       notes: get("sale-notes").value,
       receiptFile: get("sale-receipt").files?.[0] || null,
     };
+
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { alert("You are signed out. Please sign in and try again."); return; }
 
@@ -1188,6 +1198,8 @@ function ReportSale() {
       alert("Sale saved!");
       await load();
       if (closeAfter) setOpen(false);
+      // reset platform after successful save (optional)
+      setSalePlatform(null);
     } catch (err) {
       console.error("addSale insert failed:", err);
       const msg = err?.message || err?.error_description || (err?.details ? `${err.details} (${err.code || ""})` : "Something went wrong saving the sale.");
@@ -1195,6 +1207,7 @@ function ReportSale() {
     }
   }
 }
+
 
 // ---------- Add Inventory ----------
 function AddInventory() {
