@@ -4,8 +4,26 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
-  Search, Bell, Settings, User as UserIcon, LogOut, Plus, BarChart2, Package,
-  Receipt, ShoppingCart, FileText, Layers, Home, Link as LinkIcon, Trash2, Pencil, X, Save, RotateCcw, BadgeDollarSign
+  Search,
+  Bell,
+  Settings as SettingsIcon, // ✨ alias the icon
+  User as UserIcon,
+  LogOut,
+  Plus,
+  BarChart2,
+  Package,
+  Receipt,
+  ShoppingCart,
+  FileText,
+  Layers,
+  Home,
+  Link as LinkIcon,
+  Trash2,
+  Pencil,
+  X,
+  Save,
+  RotateCcw,
+  BadgeDollarSign,
 } from "lucide-react";
 import { supabase } from "./lib/supabaseClient";
 import { addExpense, mapGLAccount } from "./db/expenses";
@@ -14,7 +32,8 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 import TaxonomyPicker from "./Components/TaxonomyPicker";
-import Settings from "./pages/Settings";
+// ✨ import the page using lowercase filename and alias it
+import SettingsPage from "./pages/settings.jsx";
 
 // ---------- tiny helpers ----------
 const baseInput =
@@ -79,13 +98,13 @@ function dl(filename, text) {
 }
 
 // ---------- small inputs ----------
-function TextField({ label, id, prefix, type = "text", required, className, defaultValue }) {
+function TextField({ label, id, prefix, type = "text", required, className, defaultValue, placeholder }) {
   return (
     <label className={`block ${className || ""}`}>
       <span className={labelCls}>{label}{required ? " *" : ""}</span>
       <div className="mt-1 flex items-center gap-2">
         {prefix ? <span className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-slate-600">{prefix}</span> : null}
-        <input id={id} type={type} defaultValue={defaultValue} className={baseInput} />
+        <input id={id} type={type} defaultValue={defaultValue} placeholder={placeholder} className={baseInput} />
       </div>
     </label>
   );
@@ -199,7 +218,7 @@ const TopBar = ({ onOpenSettings }) => {
         title="Settings"
         onClick={onOpenSettings}
       >
-        <Settings size={18} />
+        <SettingsIcon size={18} />
       </button>
 
       {/* Account menu */}
@@ -250,7 +269,6 @@ const TopBar = ({ onOpenSettings }) => {
   );
 };
 
-
 // ---------- pages ----------
 function GetStarted() {
   return (
@@ -274,7 +292,6 @@ function Dashboard() {
 
     (async () => {
       try {
-        // Pull this year's five feeds (already filtered per-user by RLS)
         const [salesRes, refundsRes, expensesRes, rebatesRes, inventoryRes] = await Promise.all([
           supabase.from("feed_sales").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
           supabase.from("feed_refunds").select("txn_date, amount").gte("txn_date", start).lte("txn_date", end).limit(10000),
@@ -285,11 +302,10 @@ function Dashboard() {
 
         const sales = salesRes.data || [];
         const refunds = refundsRes.data || [];
-        const opEx = expensesRes.data || [];       // operating expenses (non-COGS)
-        const rebates = rebatesRes.data || [];     // supplier rebates (reduce op-ex)
-        const cogs = inventoryRes.data || [];      // inventory purchases (COGS)
+        const opEx = expensesRes.data || [];
+        const rebates = rebatesRes.data || [];
+        const cogs = inventoryRes.data || [];
 
-        // Bucket by month
         const buckets = {};
         const ensure = (d) => {
           const key = `${d.getFullYear()}/${d.getMonth() + 1}`;
@@ -297,7 +313,6 @@ function Dashboard() {
           return buckets[key];
         };
 
-        // Income = sales - refunds
         for (const r of sales) {
           const d = new Date(r.txn_date);
           if (isNaN(d)) continue;
@@ -308,8 +323,6 @@ function Dashboard() {
           if (isNaN(d)) continue;
           ensure(d).income -= Number(r.amount || 0);
         }
-
-        // Operating expenses = expenses - rebates
         for (const r of opEx) {
           const d = new Date(r.txn_date);
           if (isNaN(d)) continue;
@@ -320,15 +333,12 @@ function Dashboard() {
           if (isNaN(d)) continue;
           ensure(d).opEx -= Number(r.amount || 0);
         }
-
-        // COGS (inventory purchases)
         for (const r of cogs) {
           const d = new Date(r.txn_date);
           if (isNaN(d)) continue;
           ensure(d).cogs += Number(r.amount || 0);
         }
 
-        // Build 12 months in order
         const arr = Array.from({ length: 12 }, (_, i) => {
           const k = `${y}/${i + 1}`;
           const b = buckets[k] || { income: 0, opEx: 0, cogs: 0 };
@@ -358,12 +368,12 @@ function Dashboard() {
 
   const totals = series.reduce((acc, r) => {
     acc.income += r.income || 0;
-    acc.opEx  += r.opEx  || 0;
-    acc.cogs  += r.cogs  || 0;
+    acc.opEx += r.opEx || 0;
+    acc.cogs += r.cogs || 0;
     return acc;
   }, { income: 0, opEx: 0, cogs: 0 });
-    
-  const expensesTotal = totals.opEx + totals.cogs; 
+
+  const expensesTotal = totals.opEx + totals.cogs;
   const profit = totals.income - expensesTotal;
   const margin = totals.income ? (profit / totals.income) * 100 : 0;
 
@@ -394,7 +404,6 @@ function Dashboard() {
     </div>
   );
 }
-
 
 const SortHeader = ({ label, sortKey, activeKey, dir, onSort }) => (
   <th className="px-3 py-2 text-left select-none cursor-pointer hover:underline" onClick={() => onSort(sortKey)} title="Click to sort">
@@ -2136,7 +2145,7 @@ const PAGES = {
   "Add Expense": AddExpense,
   "Add Rebate/Refund": AddRebateRefund,
   Integrations: Integrations,
-  Settings: Settings,
+  Settings: SettingsPage, // ✨ use the page alias here
 };
 
 function iconFor(name) {
@@ -2156,7 +2165,7 @@ function iconFor(name) {
     case "Add Expense":
       return Receipt;
     case "Add Rebate/Refund":
-      return RotateCcw; 
+      return RotateCcw;
     case "Integrations":
       return LinkIcon;
     default:
@@ -2192,21 +2201,42 @@ function PageHeader({ name }) {
 
 export default function AdminApp() {
   const [page, setPage] = useState("Get Started");
-  const [showSettings, setShowSettings] = useState(false);   // ✨ NEW
+  const [showSettings, setShowSettings] = useState(false);
   const PageComp = PAGES[page];
 
-  // ... your existing useEffect etc.
+  // keep your original sanity check
+  useEffect(() => {
+    console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL);
+    supabase
+      .from("inventory")
+      .select("id", { head: true, count: "exact" })
+      .then(({ error, count }) => {
+        if (error) console.log("Test select result:", error.message);
+        else console.log("Test select OK. Row count:", count);
+      });
+  }, []);
 
   return (
     <div className="min-h-screen grid grid-cols-12 bg-slate-50">
       <aside className="col-span-12 md:col-span-2 xl:col-span-2 bg-white border-r border-slate-200 p-3 flex flex-col">
-        {/* ... sidebar unchanged ... */}
+        <div className="flex items-center gap-2 px-2 py-3">
+          <img src={logoUrl} alt="Reseller Admin logo" className="h-7 w-7 squared" draggable="false" />
+          <div className="leading-tight">
+            <div className="font-semibold">Reseller Portal</div>
+          </div>
+        </div>
+        <nav className="mt-3 space-y-1">
+          {Object.keys(PAGES).map((name) => {
+            const Icon = iconFor(name);
+            return (
+              <NavButton key={name} icon={Icon} label={name} active={page === name} onClick={() => setPage(name)} />
+            );
+          })}
+        </nav>
       </aside>
 
       <main className="col-span-12 md:col-span-10 xl:col-span-10">
-        {/* pass the opener down */}
         <TopBar onOpenSettings={() => setShowSettings(true)} />
-
         <div className="px-4 pb-10">
           <PageHeader name={page} />
           <div className="mt-4">
@@ -2215,7 +2245,7 @@ export default function AdminApp() {
         </div>
       </main>
 
-      {/* SETTINGS OVERLAY (uses your existing Modal) */}
+      {/* SETTINGS OVERLAY */}
       <Modal
         open={showSettings}
         onClose={() => setShowSettings(false)}
@@ -2226,7 +2256,6 @@ export default function AdminApp() {
     </div>
   );
 }
-
 
 /** ---- Modal (kept at bottom to avoid scroll noise) ---- */
 function Modal({ open, onClose, title, children, footer }) {
