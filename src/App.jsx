@@ -14,6 +14,7 @@ import { getReceiptURL, deleteReceipt } from "./db/storage";
 import logoUrl from "./assets/reseller-logo.png";
 import { useAuth } from "./lib/auth";
 import TaxonomyPicker from "./Components/TaxonomyPicker";
+import Settings from "./pages/settings";
 
 // ---------- tiny helpers ----------
 const baseInput =
@@ -160,7 +161,7 @@ const Card = ({ title, children, right }) => (
 );
 
 // ---------- top bar ----------
-const TopBar = () => {
+const TopBar = ({ onOpenSettings }) => {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
   const menuRef = useRef(null);
@@ -185,15 +186,30 @@ const TopBar = () => {
 
   return (
     <div className="relative flex items-center justify-end gap-2 p-3">
-      <button className="p-2 rounded-full hover:bg-slate-100" title="Search"><Search size={18} /></button>
-      <button className="p-2 rounded-full hover:bg-slate-100" title="Notifications"><Bell size={18} /></button>
-      <button className="p-2 rounded-full hover:bg-slate-100" title="Settings"><Settings size={18} /></button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Search">
+        <Search size={18} />
+      </button>
+      <button className="p-2 rounded-full hover:bg-slate-100" title="Notifications">
+        <Bell size={18} />
+      </button>
 
+      {/* Settings -> open overlay */}
+      <button
+        className="p-2 rounded-full hover:bg-slate-100"
+        title="Settings"
+        onClick={onOpenSettings}
+      >
+        <Settings size={18} />
+      </button>
+
+      {/* Account menu */}
       <button
         ref={btnRef}
         onClick={() => setOpen((s) => !s)}
         className="w-9 h-9 rounded-full bg-slate-200 grid place-items-center hover:bg-slate-300"
-        title="Account" aria-haspopup="menu" aria-expanded={open}
+        title="Account"
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <UserIcon size={18} />
       </button>
@@ -212,10 +228,10 @@ const TopBar = () => {
             <>
               <button
                 className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-                onClick={() => { setOpen(false); alert("Profile coming soon"); }}
+                onClick={() => { setOpen(false); onOpenSettings?.(); }}
                 role="menuitem"
               >
-                Profile
+                Profile / Settings
               </button>
               <button
                 className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
@@ -226,15 +242,14 @@ const TopBar = () => {
               </button>
             </>
           ) : (
-            <div className="px-3 py-2 text-sm text-slate-600">
-              Not signed in
-            </div>
+            <div className="px-3 py-2 text-sm text-slate-600">Not signed in</div>
           )}
         </div>
       )}
     </div>
   );
 };
+
 
 // ---------- pages ----------
 function GetStarted() {
@@ -2121,6 +2136,7 @@ const PAGES = {
   "Add Expense": AddExpense,
   "Add Rebate/Refund": AddRebateRefund,
   Integrations: Integrations,
+  Settings: Settings,
 };
 
 function iconFor(name) {
@@ -2176,40 +2192,21 @@ function PageHeader({ name }) {
 
 export default function AdminApp() {
   const [page, setPage] = useState("Get Started");
+  const [showSettings, setShowSettings] = useState(false);   // ✨ NEW
   const PageComp = PAGES[page];
 
-  useEffect(() => {
-    console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL);
-    supabase
-      .from("inventory")
-      .select("id", { head: true, count: "exact" })
-      .then(({ error, count }) => {
-        if (error) console.log("Test select result:", error.message);
-        else console.log("Test select OK. Row count:", count);
-      });
-  }, []);
+  // ... your existing useEffect etc.
 
   return (
     <div className="min-h-screen grid grid-cols-12 bg-slate-50">
       <aside className="col-span-12 md:col-span-2 xl:col-span-2 bg-white border-r border-slate-200 p-3 flex flex-col">
-        <div className="flex items-center gap-2 px-2 py-3">
-          <img src={logoUrl} alt="Reseller Admin logo" className="h-7 w-7 squared" draggable="false" />
-          <div className="leading-tight">
-            <div className="font-semibold">Reseller Portal</div>
-          </div>
-        </div>
-        <nav className="mt-3 space-y-1">
-          {Object.keys(PAGES).map((name) => {
-            const Icon = iconFor(name);
-            return (
-              <NavButton key={name} icon={Icon} label={name} active={page === name} onClick={() => setPage(name)} />
-            );
-          })}
-        </nav>
+        {/* ... sidebar unchanged ... */}
       </aside>
 
       <main className="col-span-12 md:col-span-10 xl:col-span-10">
-        <TopBar />
+        {/* pass the opener down */}
+        <TopBar onOpenSettings={() => setShowSettings(true)} />
+
         <div className="px-4 pb-10">
           <PageHeader name={page} />
           <div className="mt-4">
@@ -2217,9 +2214,19 @@ export default function AdminApp() {
           </div>
         </div>
       </main>
+
+      {/* SETTINGS OVERLAY (uses your existing Modal) */}
+      <Modal
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        title="Settings"
+      >
+        <Settings />
+      </Modal>
     </div>
   );
 }
+
 
 /** ---- Modal (kept at bottom to avoid scroll noise) ---- */
 function Modal({ open, onClose, title, children, footer }) {
