@@ -1,43 +1,37 @@
 // src/db/analytics.js
 import { supabase } from "../lib/supabaseClient";
 
-// Read — returns id columns + display names (for table + editing)
+/**
+ * Return rows with both IDs and display names (joined).
+ */
 export async function listGroupings() {
   const { data, error } = await supabase
     .from("analytics_groupings")
-    .select(
-      `
-        id,
-        department_id,
-        category_id,
-        subcategory_id,
-        departments:department_id ( id, name ),
-        categories:category_id ( id, name ),
-        subcategories:subcategory_id ( id, name )
-      `
-    )
+    .select(`
+      id,
+      department_id,
+      category_id,
+      subcategory_id,
+      departments:department_id ( id, name ),
+      categories:category_id   ( id, name ),
+      subcategories:subcategory_id ( id, name )
+    `)
     .order("id", { ascending: true });
 
   if (error) throw error;
 
-  // flatten names so Settings can render easily
   return (data || []).map((r) => ({
     id: r.id,
     department_id: r.department_id,
     category_id: r.category_id,
     subcategory_id: r.subcategory_id,
-    department: r.departments?.name || "",
-    category: r.categories?.name || "",
-    subcategory: r.subcategories?.name || "",
+    department: r.departments?.name ?? "",
+    category: r.categories?.name ?? "",
+    subcategory: r.subcategories?.name ?? "",
   }));
 }
 
-// Create (expects id values)
-export async function addGroupingTriple({
-  departmentId,
-  categoryId,
-  subcategoryId,
-}) {
+export async function addGroupingTriple({ departmentId, categoryId, subcategoryId }) {
   const { data, error } = await supabase
     .from("analytics_groupings")
     .insert([
@@ -54,12 +48,7 @@ export async function addGroupingTriple({
   return data;
 }
 
-// Update (expects id values)
-export async function updateGroupingTriple(id, {
-  departmentId,
-  categoryId,
-  subcategoryId,
-}) {
+export async function updateGroupingTriple(id, { departmentId, categoryId, subcategoryId }) {
   const { data, error } = await supabase
     .from("analytics_groupings")
     .update({
@@ -80,5 +69,6 @@ export async function deleteGrouping(id) {
     .from("analytics_groupings")
     .delete()
     .eq("id", id);
+
   if (error) throw error;
 }

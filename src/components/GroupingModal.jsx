@@ -16,15 +16,8 @@ const inputCls =
 const btnBase = "rounded-md px-3 py-2 text-sm transition-colors";
 const overlay = "fixed inset-0 bg-black/30 flex items-start justify-center p-4 z-50";
 
-function ComboBox({
-  label,
-  valueText,
-  setValueText,
-  items,           // [{id, name}]
-  disabled,
-  onPick,          // (item) => void
-  placeholder,
-}) {
+// Lightweight combobox (typeahead + filtered dropdown)
+function ComboBox({ label, valueText, setValueText, items, disabled, onPick, placeholder }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -71,6 +64,7 @@ function ComboBox({
                 className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
                 onClick={() => {
                   onPick?.(it);
+                  setOpen(false);
                 }}
               >
                 {it.name}
@@ -83,92 +77,59 @@ function ComboBox({
   );
 }
 
+function norm(s) {
+  return (s || "").trim().toLowerCase();
+}
+
 export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const isEdit = !!initial?.id;
 
-  // text + ids
+  // text + selected IDs (when picked)
   const [depText, setDepText] = useState("");
   const [depId, setDepId] = useState(null);
+
   const [catText, setCatText] = useState("");
   const [catId, setCatId] = useState(null);
+
   const [subText, setSubText] = useState("");
   const [subId, setSubId] = useState(null);
 
+  // lists
   const [deps, setDeps] = useState([]);
   const [cats, setCats] = useState([]);
   const [subs, setSubs] = useState([]);
 
-  const [saving, setSaving] = useState(false);
-
-  // Load departments on open, then prefill chain (if initial present)
+  // load deps when modal opens
   useEffect(() => {
     if (!open) return;
+    (async () => {
+      const rows = await listDepartments();
+      setDeps(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
+    })();
+  }, [open]);
 
-    setSaving(false);
-    setDepText(initial?.department || "");
-    setCatText(initial?.category || "");
-    setSubText(initial?.subcategory || "");
-    setDepId(null);
-    setCatId(null);
-    setSubId(null);
+  // reset/prefill text
+  useEffect(() => {
+    if (!open) return;
+    setDepId(initial?.department_id ?? null);
+    setCatId(initial?.category_id ?? null);
+    setSubId(initial?.subcategory_id ?? null);
+
+    setDepText(initial?.department ?? "");
+    setCatText(initial?.category ?? "");
+    setSubText(initial?.subcategory ?? "");
+
     setCats([]);
     setSubs([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isEdit]);
 
-    (async () => {
-      // 1) load all departments
-      const drows = await listDepartments();
-      const d = (drows || []).map((r) => ({ id: r.id, name: r.name ?? r.title }));
-      setDeps(d);
-
-      // Try to resolve department by name if provided
-      if ((initial?.department || "").trim()) {
-        const match = d.find(
-          (x) => x.name.toLowerCase() === initial.department.trim().toLowerCase()
-        );
-        if (match) {
-          setDepId(match.id);
-          setDepText(match.name);
-          // 2) load categories for that department
-          const crows = await listCategories(match.id);
-          const c = (crows || []).map((r) => ({ id: r.id, name: r.name ?? r.title }));
-          setCats(c);
-
-          if ((initial?.category || "").trim()) {
-            const cmatch = c.find(
-              (x) => x.name.toLowerCase() === initial.category.trim().toLowerCase()
-            );
-            if (cmatch) {
-              setCatId(cmatch.id);
-              setCatText(cmatch.name);
-              // 3) load subcategories for that category
-              const srows = await listSubcategories(cmatch.id);
-              const s = (srows || []).map((r) => ({ id: r.id, name: r.name ?? r.title }));
-              setSubs(s);
-
-              if ((initial?.subcategory || "").trim()) {
-                const smatch = s.find(
-                  (x) => x.name.toLowerCase() === initial.subcategory.trim().toLowerCase()
-                );
-                if (smatch) {
-                  setSubId(smatch.id);
-                  setSubText(smatch.name);
-                }
-              }
-            }
-          }
-        }
-      }
-    })();
-  }, [open, initial]);
-
-  // load categories when picking an existing department id
+  // when a department is chosen (by id) load categories
   useEffect(() => {
     (async () => {
       if (!depId) {
         setCats([]);
         setCatId(null);
-        setSubId(null);
-        setSubText("");
         return;
       }
       const rows = await listCategories(depId);
@@ -176,7 +137,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
     })();
   }, [depId]);
 
-  // load subcategories when picking an existing category id
+  // when a category is chosen (by id) load subcategories
   useEffect(() => {
     (async () => {
       if (!catId) {
@@ -189,91 +150,119 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
     })();
   }, [catId]);
 
-  // Picking existing items
+  // pre-select by names when lists arrive (for add-mode prefill)
+  // 1) department
+  useEffect(() => {
+    if (!open) return;
+    if (!depId && depText) {
+      const match = deps.find((d) => norm(d.name) === norm(depText));
+      if (match) {
+        setDepId(match.id);
+        // keep depText as-is
+      }
+    }
+  }, [open, deps, depId, depText]);
+
+  // 2) category
+  useEffect(() => {
+    if (!open) return;
+    if (!catId && catText && cats.length > 0) {
+      const match = cats.find((c) => norm(c.name) === norm(catText));
+      if (match) {
+        setCatId(match.id);
+      }
+    }
+  }, [open, cats, catId, catText]);
+
+  // 3) subcategory
+  useEffect(() => {
+    if (!open) return;
+    if (!subId && subText && subs.length > 0) {
+      const match = subs.find((s) => norm(s.name) === norm(subText));
+      if (match) {
+        setSubId(match.id);
+      }
+    }
+  }, [open, subs, subId, subText]);
+
+  // picking from dropdowns
   function onPickDep(it) {
     setDepId(it.id);
     setDepText(it.name);
-    setCatId(null);
     setCatText("");
-    setSubId(null);
+    setCatId(null);
     setSubText("");
+    setSubId(null);
   }
   function onPickCat(it) {
     setCatId(it.id);
     setCatText(it.name);
-    setSubId(null);
     setSubText("");
+    setSubId(null);
   }
   function onPickSub(it) {
     setSubId(it.id);
     setSubText(it.name);
   }
 
-  // If user types (changes text), clear the corresponding id so we treat it as new
+  // typing clears the selected IDs (so we treat as "new")
   useEffect(() => {
     if (depId && deps.find((d) => d.id === depId)?.name !== depText) {
       setDepId(null);
       setCats([]);
       setCatId(null);
-      setSubId(null);
       setSubText("");
+      setSubId(null);
     }
-  }, [depText]); // eslint-disable-line
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depText]);
   useEffect(() => {
     if (catId && cats.find((c) => c.id === catId)?.name !== catText) {
       setCatId(null);
       setSubs([]);
-      setSubId(null);
       setSubText("");
+      setSubId(null);
     }
-  }, [catText]); // eslint-disable-line
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catText]);
   useEffect(() => {
     if (subId && subs.find((s) => s.id === subId)?.name !== subText) {
       setSubId(null);
     }
-  }, [subText]); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subText]);
 
   const canSave =
     depText.trim().length > 0 &&
     catText.trim().length > 0 &&
-    subText.trim().length > 0 &&
-    !saving;
+    subText.trim().length > 0;
 
   async function onSubmit() {
     if (!canSave) return;
-    setSaving(true);
+
+    // Ensure/create taxonomy and get IDs
+    const finalDepId = depId ?? (await ensureDepartment(depText.trim()));
+    const finalCatId = catId ?? (await ensureCategory(finalDepId, catText.trim()));
+    const finalSubId = subId ?? (await ensureSubcategory(finalCatId, subText.trim()));
+
     try {
-      // Always ensure/create chain, then use *ids* for analytics_groupings
-      const depRowId = depId ?? (await ensureDepartment(depText.trim()))?.id;
-      const catRowId = catId ?? (await ensureCategory(depRowId, catText.trim()))?.id;
-      const subRowId = subId ?? (await ensureSubcategory(catRowId, subText.trim()))?.id;
-
-      if (!depRowId || !catRowId || !subRowId) {
-        throw new Error("Could not resolve taxonomy ids.");
-      }
-
-      if (isEdit && initial?.id) {
+      if (isEdit) {
         await updateGroupingTriple(initial.id, {
-          departmentId: depRowId,
-          categoryId: catRowId,
-          subcategoryId: subRowId,
+          departmentId: finalDepId,
+          categoryId: finalCatId,
+          subcategoryId: finalSubId,
         });
       } else {
         await addGroupingTriple({
-          departmentId: depRowId,
-          categoryId: catRowId,
-          subcategoryId: subRowId,
+          departmentId: finalDepId,
+          categoryId: finalCatId,
+          subcategoryId: finalSubId,
         });
       }
-
       onClose?.();
       await onSaved?.();
-    } catch (err) {
-      alert(err?.message || "Save failed");
-    } finally {
-      setSaving(false);
+    } catch (e) {
+      alert(e.message || "Save failed");
     }
   }
 
@@ -286,7 +275,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
           <h3 className="text-base font-semibold text-zinc-800">
             {isEdit ? "Edit Analytics Grouping" : "Add Analytics Grouping"}
           </h3>
-          <button className="p-2 rounded-md hover:bg-zinc-100" onClick={() => onClose?.()}>
+          <button className="p-2 rounded-md hover:bg-zinc-100" onClick={() => onClose?.()} aria-label="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -309,13 +298,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
               items={depId ? cats : []}
               disabled={!depText.trim()}
               onPick={onPickCat}
-              placeholder={
-                depText.trim() && !depId
-                  ? "New department—type a category"
-                  : depId
-                  ? "Type or pick…"
-                  : "Select/enter department first"
-              }
+              placeholder={depId ? "Type or pick…" : "Select/enter department first"}
             />
             <ComboBox
               label="Sub-category"
@@ -324,23 +307,13 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
               items={catId ? subs : []}
               disabled={!catText.trim()}
               onPick={onPickSub}
-              placeholder={
-                catText.trim() && !catId
-                  ? "New category—type a sub-category"
-                  : catId
-                  ? "Type or pick…"
-                  : "Select/enter category first"
-              }
+              placeholder={catId ? "Type or pick…" : "Select/enter category first"}
             />
           </div>
         </div>
 
         <div className="px-5 py-4 border-t border-zinc-200 flex justify-end gap-2">
-          <button
-            className={`${btnBase} border border-zinc-300 text-zinc-800`}
-            onClick={() => onClose?.()}
-            disabled={saving}
-          >
+          <button className={`${btnBase} border border-zinc-300 text-zinc-800`} onClick={() => onClose?.()}>
             Cancel
           </button>
           <button
@@ -350,7 +323,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
             disabled={!canSave}
             onClick={onSubmit}
           >
-            {saving ? (isEdit ? "Saving…" : "Adding…") : isEdit ? "Save" : "Add"}
+            {isEdit ? "Save" : "Add"}
           </button>
         </div>
       </div>
