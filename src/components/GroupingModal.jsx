@@ -9,15 +9,26 @@ import {
   ensureCategory,
   ensureSubcategory,
 } from "../db/taxonomy";
-import { addGroupingTriple, updateGroupingTriple } from "../db/analytics";
+import {
+  addGroupingTripleByIds,
+  updateGroupingByIds,
+} from "../db/analytics";
 
 const inputCls =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200";
 const btnBase = "rounded-md px-3 py-2 text-sm transition-colors";
 const overlay = "fixed inset-0 bg-black/30 flex items-start justify-center p-4 z-50";
 
-/* ──────────────────────────────────────────────────────────────────────────── */
-function ComboBox({ label, valueText, setValueText, items, disabled, onPick, placeholder }) {
+/** Small typeahead combobox that allows free text + filtered pick list */
+function ComboBox({
+  label,
+  valueText,
+  setValueText,
+  items, // [{id, name}]
+  disabled,
+  onPick, // (item) -> void
+  placeholder,
+}) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -77,109 +88,141 @@ function ComboBox({ label, valueText, setValueText, items, disabled, onPick, pla
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────────── */
 export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const isEdit = !!initial?.id;
 
-  // Free text + ids when existing item is picked
+  // Text + resolved IDs
   const [depText, setDepText] = useState("");
   const [depId, setDepId] = useState(null);
+
   const [catText, setCatText] = useState("");
   const [catId, setCatId] = useState(null);
+
   const [subText, setSubText] = useState("");
   const [subId, setSubId] = useState(null);
 
+  // Lists
   const [deps, setDeps] = useState([]);
   const [cats, setCats] = useState([]);
   const [subs, setSubs] = useState([]);
 
-  const [saving, setSaving] = useState(false);
-
-  const byName = (name) => (x) => (x.name || "").toLowerCase() === (name || "").toLowerCase();
-  const onlyId = (x) => (x && typeof x === "object" ? x.id : x); // tolerate ensure* returning row or id
-
-  // Load departments and prefill texts from `initial` (works for add or edit)
+  // Load departments each time modal opens
   useEffect(() => {
     if (!open) return;
     (async () => {
       const rows = await listDepartments();
-      const list = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
-      setDeps(list);
-
-      // Reset ids & lists
-      setDepId(null); setCatId(null); setSubId(null);
-      setCats([]); setSubs([]);
-
-      // Prefill texts from initial (if provided)
-      setDepText(initial?.department || "");
-      setCatText(initial?.category || "");
-      setSubText(initial?.subcategory || "");
-
-      // Resolve department id if it exists already
-      if (initial?.department) {
-        const d = list.find(byName(initial.department));
-        if (d) { setDepId(d.id); setDepText(d.name); }
-      }
+      setDeps(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
     })();
+  }, [open]);
+
+  // Reset fields each open and seed with "initial" (add-mode prefill)
+  useEffect(() => {
+    if (!open) return;
+    setDepText(initial?.department ?? (isEdit ? initial?.department : ""));
+    setCatText(initial?.category ?? (isEdit ? initial?.category : ""));
+    setSubText(isEdit ? initial?.subcategory ?? "" : ""); // add-mode: leave empty unless editing
+
+    setDepId(initial?.department_id ?? null);
+    setCatId(initial?.category_id ?? null);
+    setSubId(initial?.subcategory_id ?? null);
+
+    setCats([]);
+    setSubs([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Load categories when we have a department id (and try resolve initial.category)
+  // Resolve depId from text once department list is loaded
+  useEffect(() => {
+    if (!open) return;
+    if (depId) return; // already resolved/prefilled by id
+    if (!depText?.trim() || deps.length === 0) return;
+    const match = deps.find(
+      (d) => (d.name || "").toLowerCase() === depText.trim().toLowerCase()
+    );
+    if (match) setDepId(match.id);
+  }, [open, depText, deps, depId]);
+
+  // Load categories when depId becomes available
   useEffect(() => {
     (async () => {
-      if (!depId) { setCats([]); setCatId(null); return; }
+      if (!depId) {
+        setCats([]);
+        setCatId(null);
+        return;
+      }
       const rows = await listCategories(depId);
-      const list = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
-      setCats(list);
+      const catsList = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
+      setCats(catsList);
 
-      if (initial?.category) {
-        const c = list.find(byName(initial.category));
-        if (c) { setCatId(c.id); setCatText(c.name); }
+      // If an initial category text was provided (add/edit), resolve its id once cats are here
+      if (catText?.trim() && !catId) {
+        const cMatch = catsList.find(
+          (c) => (c.name || "").toLowerCase() === catText.trim().toLowerCase()
+        );
+        if (cMatch) setCatId(cMatch.id);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depId]);
+  }, [depId]); // intentionally only when depId changes
 
-  // Load subcategories when we have a category id (and try resolve initial.subcategory)
+  // Load subcategories when catId becomes available
   useEffect(() => {
     (async () => {
-      if (!catId) { setSubs([]); setSubId(null); return; }
+      if (!catId) {
+        setSubs([]);
+        setSubId(null);
+        return;
+      }
       const rows = await listSubcategories(catId);
-      const list = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
-      setSubs(list);
+      const subsList = rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || [];
+      setSubs(subsList);
 
-      if (initial?.subcategory) {
-        const s = list.find(byName(initial.subcategory));
-        if (s) { setSubId(s.id); setSubText(s.name); }
+      // If an initial subcategory text was provided (edit), resolve its id once subs are here
+      if (subText?.trim() && !subId) {
+        const sMatch = subsList.find(
+          (s) => (s.name || "").toLowerCase() === subText.trim().toLowerCase()
+        );
+        if (sMatch) setSubId(sMatch.id);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catId]);
+  }, [catId]); // intentionally only when catId changes
 
   // Picking existing items
   function onPickDep(it) {
-    setDepId(it.id); setDepText(it.name);
-    setCatText(""); setCatId(null);
-    setSubText(""); setSubId(null);
+    setDepId(it.id);
+    setDepText(it.name);
+    setCatText("");
+    setCatId(null);
+    setSubText("");
+    setSubId(null);
   }
   function onPickCat(it) {
-    setCatId(it.id); setCatText(it.name);
-    setSubText(""); setSubId(null);
+    setCatId(it.id);
+    setCatText(it.name);
+    setSubText("");
+    setSubId(null);
   }
   function onPickSub(it) {
-    setSubId(it.id); setSubText(it.name);
+    setSubId(it.id);
+    setSubText(it.name);
   }
 
-  // Clear ids if the user edits text (treat as new)
+  // If user types arbitrary text (not a current pick) clear lower levels as needed
   useEffect(() => {
     if (depId && deps.find((d) => d.id === depId)?.name !== depText) {
-      setDepId(null); setCats([]); setCatId(null); setSubs([]); setSubId(null);
+      setDepId(null);
+      setCats([]);
+      setCatId(null);
+      setSubId(null);
+      setSubText("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depText]);
   useEffect(() => {
     if (catId && cats.find((c) => c.id === catId)?.name !== catText) {
-      setCatId(null); setSubs([]); setSubId(null);
+      setCatId(null);
+      setSubs([]);
+      setSubId(null);
+      setSubText("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catText]);
@@ -193,37 +236,36 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const canSave =
     depText.trim().length > 0 &&
     catText.trim().length > 0 &&
-    subText.trim().length > 0 &&
-    !saving;
+    subText.trim().length > 0;
 
   async function onSubmit() {
     if (!canSave) return;
-    setSaving(true);
+
     try {
-      const depName = depText.trim();
-      const catName = catText.trim();
-      const subName = subText.trim();
-
-      // Ensure/resolve taxonomy chain (ok if already exists)
-      const depResolved = onlyId(depId) ?? onlyId(await ensureDepartment(depName));
-      const catResolved = onlyId(catId) ?? onlyId(await ensureCategory(depResolved, catName));
-      await ensureSubcategory(catResolved, subName);
-
-      const payload = { department: depName, category: catName, subcategory: subName };
+      // Ensure each level exists (creates if missing) and get final IDs
+      const finalDepId = depId ?? (await ensureDepartment(depText.trim()));
+      const finalCatId = catId ?? (await ensureCategory(finalDepId, catText.trim()));
+      const finalSubId = subId ?? (await ensureSubcategory(finalCatId, subText.trim()));
 
       if (isEdit) {
-        await updateGroupingTriple(initial.id, payload);
+        await updateGroupingByIds(initial.id, {
+          department_id: finalDepId,
+          category_id: finalCatId,
+          subcategory_id: finalSubId,
+        });
       } else {
-        await addGroupingTriple(payload);
+        await addGroupingTripleByIds({
+          department_id: finalDepId,
+          category_id: finalCatId,
+          subcategory_id: finalSubId,
+        });
       }
 
       onClose?.();
       await onSaved?.();
     } catch (err) {
       console.error("Save grouping failed:", err);
-      alert(err?.message || err?.error_description || "Could not save grouping.");
-    } finally {
-      setSaving(false);
+      alert(err?.message || "Failed to save grouping.");
     }
   }
 
@@ -236,7 +278,11 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
           <h3 className="text-base font-semibold text-zinc-800">
             {isEdit ? "Edit Analytics Grouping" : "Add Analytics Grouping"}
           </h3>
-          <button className="p-2 rounded-md hover:bg-zinc-100" onClick={() => onClose?.()} aria-label="Close">
+          <button
+            className="p-2 rounded-md hover:bg-zinc-100"
+            onClick={() => onClose?.()}
+            aria-label="Close"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -259,13 +305,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
               items={depId ? cats : []}
               disabled={!depText.trim()}
               onPick={onPickCat}
-              placeholder={
-                depText.trim() && !depId
-                  ? "New department — type a category"
-                  : depId
-                  ? "Type or pick…"
-                  : "Select/enter department first"
-              }
+              placeholder={depId ? "Type or pick…" : "Select/enter department first"}
             />
             <ComboBox
               label="Sub-category"
@@ -274,19 +314,16 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
               items={catId ? subs : []}
               disabled={!catText.trim()}
               onPick={onPickSub}
-              placeholder={
-                catText.trim() && !catId
-                  ? "New category — type a sub-category"
-                  : catId
-                  ? "Type or pick…"
-                  : "Select/enter category first"
-              }
+              placeholder={catId ? "Type or pick…" : "Select/enter category first"}
             />
           </div>
         </div>
 
         <div className="px-5 py-4 border-t border-zinc-200 flex justify-end gap-2">
-          <button className={`${btnBase} border border-zinc-300 text-zinc-800`} onClick={() => onClose?.()}>
+          <button
+            className={`${btnBase} border border-zinc-300 text-zinc-800`}
+            onClick={() => onClose?.()}
+          >
             Cancel
           </button>
           <button
@@ -296,7 +333,7 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
             disabled={!canSave}
             onClick={onSubmit}
           >
-            {saving ? "Saving…" : isEdit ? "Save" : "Add"}
+            {isEdit ? "Save" : "Add"}
           </button>
         </div>
       </div>
