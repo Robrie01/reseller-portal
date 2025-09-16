@@ -11,49 +11,51 @@ import {
 } from "../db/taxonomy";
 import { addGroupingTriple, updateGroupingTriple } from "../db/analytics";
 
+const overlay = "fixed inset-0 bg-black/30 flex items-start justify-center p-4 z-50";
+const panel = "w-full max-w-5xl rounded-2xl bg-white shadow-lg";
 const inputCls =
   "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200";
-const btnBase = "rounded-md px-3 py-2 text-sm transition-colors";
-const overlay = "fixed inset-0 bg-black/30 flex items-start justify-center p-4 z-50";
+const btn = "rounded-md px-3 py-2 text-sm";
+const labelCls = "block text-xs font-medium text-zinc-600 mb-1";
 
-// Lightweight combobox (typeahead + filtered dropdown)
-function ComboBox({ label, valueText, setValueText, items, disabled, onPick, placeholder }) {
+/** Combobox with typeahead */
+function ComboBox({ label, value, setValue, items, disabled, onPick, placeholder }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef(null);
+  const ref = useRef(null);
 
   const filtered = useMemo(() => {
-    const v = (valueText || "").trim().toLowerCase();
+    const v = (value || "").toLowerCase().trim();
     if (!v) return items || [];
-    return (items || []).filter((it) => (it.name ?? "").toLowerCase().includes(v));
-  }, [valueText, items]);
+    return (items || []).filter((it) => (it.name || "").toLowerCase().includes(v));
+  }, [value, items]);
 
   useEffect(() => {
-    function onDoc(e) {
+    const onDoc = (e) => {
       if (!open) return;
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    }
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
   return (
-    <div className="relative" ref={wrapRef}>
-      <label className="block text-xs font-medium text-zinc-600 mb-1">
+    <div className="relative" ref={ref}>
+      <label className={labelCls}>
         {label} <span className="text-rose-500">*</span>
       </label>
       <input
         className={inputCls}
         disabled={disabled}
-        value={valueText}
+        value={value}
         placeholder={placeholder}
         onChange={(e) => {
-          setValueText(e.target.value);
+          setValue(e.target.value);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
       />
       {open && !disabled && (
-        <div className="absolute z-10 mt-1 w-full max-h-56 overflow-auto rounded-md border border-zinc-200 bg-white shadow-md">
+        <div className="absolute mt-1 w-full max-h-56 overflow-auto rounded-md border border-zinc-200 bg-white shadow">
           {filtered.length === 0 ? (
             <div className="px-3 py-2 text-sm text-zinc-400">No matches</div>
           ) : (
@@ -63,7 +65,7 @@ function ComboBox({ label, valueText, setValueText, items, disabled, onPick, pla
                 type="button"
                 className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-50"
                 onClick={() => {
-                  onPick?.(it);
+                  onPick(it);
                   setOpen(false);
                 }}
               >
@@ -77,154 +79,150 @@ function ComboBox({ label, valueText, setValueText, items, disabled, onPick, pla
   );
 }
 
-function norm(s) {
-  return (s || "").trim().toLowerCase();
-}
-
+/**
+ * Props:
+ *  - open: boolean
+ *  - initial: optional { id?, department?, category?, subcategory? }
+ *  - onClose: fn()
+ *  - onSaved: async fn() -> reload table
+ */
 export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const isEdit = !!initial?.id;
 
-  // text + selected IDs (when picked)
+  // text
   const [depText, setDepText] = useState("");
-  const [depId, setDepId] = useState(null);
-
   const [catText, setCatText] = useState("");
-  const [catId, setCatId] = useState(null);
-
   const [subText, setSubText] = useState("");
+
+  // selected IDs for picked items (null if typing new)
+  const [depId, setDepId] = useState(null);
+  const [catId, setCatId] = useState(null);
   const [subId, setSubId] = useState(null);
 
-  // lists
+  // choices
   const [deps, setDeps] = useState([]);
   const [cats, setCats] = useState([]);
   const [subs, setSubs] = useState([]);
 
-  // load deps when modal opens
+  const [saving, setSaving] = useState(false);
+
+  /** Load initial lists + prefill */
   useEffect(() => {
     if (!open) return;
+    let _mounted = true;
+
     (async () => {
-      const rows = await listDepartments();
-      setDeps(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
+      const d = await listDepartments();
+      if (!_mounted) return;
+      setDeps(d);
+
+      // Prefill from initial (add mode OR edit mode)
+      const depName = (initial?.department || "").trim();
+      const catName = (initial?.category || "").trim();
+      const subName = (initial?.subcategory || "").trim();
+
+      const depMatch = depName
+        ? d.find((x) => (x.name || "").toLowerCase() === depName.toLowerCase())
+        : null;
+
+      setDepText(depName || "");
+      setDepId(depMatch?.id || null);
+
+      // If we have a department (picked or typed), load its categories
+      let depForCats = depMatch?.id || null;
+      if (depForCats) {
+        const c = await listCategories(depForCats);
+        if (!_mounted) return;
+        setCats(c);
+
+        const catMatch = catName
+          ? c.find((x) => (x.name || "").toLowerCase() === catName.toLowerCase())
+          : null;
+
+        setCatText(catName || "");
+        setCatId(catMatch?.id || null);
+
+        // If we have a category ID, load subcategories
+        if (catMatch?.id) {
+          const s = await listSubcategories(catMatch.id);
+          if (!_mounted) return;
+          setSubs(s);
+
+          const subMatch = subName
+            ? s.find((x) => (x.name || "").toLowerCase() === subName.toLowerCase())
+            : null;
+
+          setSubText(subName || "");
+          setSubId(subMatch?.id || null);
+        } else {
+          setSubs([]);
+          setSubText(subName || "");
+          setSubId(null);
+        }
+      } else {
+        setCats([]);
+        setSubs([]);
+        setCatText(catName || "");
+        setSubText(subName || "");
+        setCatId(null);
+        setSubId(null);
+      }
     })();
-  }, [open]);
 
-  // reset/prefill text
-  useEffect(() => {
-    if (!open) return;
-    setDepId(initial?.department_id ?? null);
-    setCatId(initial?.category_id ?? null);
-    setSubId(initial?.subcategory_id ?? null);
-
-    setDepText(initial?.department ?? "");
-    setCatText(initial?.category ?? "");
-    setSubText(initial?.subcategory ?? "");
-
-    setCats([]);
-    setSubs([]);
+    return () => {
+      _mounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isEdit]);
+  }, [open, initial?.department, initial?.category, initial?.subcategory]);
 
-  // when a department is chosen (by id) load categories
+  /** When a picked ID changes, load next-level lists */
   useEffect(() => {
     (async () => {
-      if (!depId) {
+      if (depId) {
+        const c = await listCategories(depId);
+        setCats(c);
+      } else {
         setCats([]);
         setCatId(null);
-        return;
       }
-      const rows = await listCategories(depId);
-      setCats(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
+      setSubs([]);
+      setSubId(null);
     })();
   }, [depId]);
 
-  // when a category is chosen (by id) load subcategories
   useEffect(() => {
     (async () => {
-      if (!catId) {
+      if (catId) {
+        const s = await listSubcategories(catId);
+        setSubs(s);
+      } else {
         setSubs([]);
         setSubId(null);
-        return;
       }
-      const rows = await listSubcategories(catId);
-      setSubs(rows?.map((r) => ({ id: r.id, name: r.name ?? r.title })) || []);
     })();
   }, [catId]);
 
-  // pre-select by names when lists arrive (for add-mode prefill)
-  // 1) department
-  useEffect(() => {
-    if (!open) return;
-    if (!depId && depText) {
-      const match = deps.find((d) => norm(d.name) === norm(depText));
-      if (match) {
-        setDepId(match.id);
-        // keep depText as-is
-      }
-    }
-  }, [open, deps, depId, depText]);
-
-  // 2) category
-  useEffect(() => {
-    if (!open) return;
-    if (!catId && catText && cats.length > 0) {
-      const match = cats.find((c) => norm(c.name) === norm(catText));
-      if (match) {
-        setCatId(match.id);
-      }
-    }
-  }, [open, cats, catId, catText]);
-
-  // 3) subcategory
-  useEffect(() => {
-    if (!open) return;
-    if (!subId && subText && subs.length > 0) {
-      const match = subs.find((s) => norm(s.name) === norm(subText));
-      if (match) {
-        setSubId(match.id);
-      }
-    }
-  }, [open, subs, subId, subText]);
-
-  // picking from dropdowns
-  function onPickDep(it) {
-    setDepId(it.id);
-    setDepText(it.name);
-    setCatText("");
-    setCatId(null);
-    setSubText("");
-    setSubId(null);
-  }
-  function onPickCat(it) {
-    setCatId(it.id);
-    setCatText(it.name);
-    setSubText("");
-    setSubId(null);
-  }
-  function onPickSub(it) {
-    setSubId(it.id);
-    setSubText(it.name);
-  }
-
-  // typing clears the selected IDs (so we treat as "new")
+  /** If user types (no longer equals picked item), clear the ID */
   useEffect(() => {
     if (depId && deps.find((d) => d.id === depId)?.name !== depText) {
       setDepId(null);
-      setCats([]);
       setCatId(null);
-      setSubText("");
       setSubId(null);
+      setCats([]);
+      setSubs([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depText]);
+
   useEffect(() => {
     if (catId && cats.find((c) => c.id === catId)?.name !== catText) {
       setCatId(null);
-      setSubs([]);
-      setSubText("");
       setSubId(null);
+      setSubs([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catText]);
+
   useEffect(() => {
     if (subId && subs.find((s) => s.id === subId)?.name !== subText) {
       setSubId(null);
@@ -235,17 +233,19 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
   const canSave =
     depText.trim().length > 0 &&
     catText.trim().length > 0 &&
-    subText.trim().length > 0;
+    subText.trim().length > 0 &&
+    !saving;
 
   async function onSubmit() {
     if (!canSave) return;
-
-    // Ensure/create taxonomy and get IDs
-    const finalDepId = depId ?? (await ensureDepartment(depText.trim()));
-    const finalCatId = catId ?? (await ensureCategory(finalDepId, catText.trim()));
-    const finalSubId = subId ?? (await ensureSubcategory(finalCatId, subText.trim()));
-
+    setSaving(true);
     try {
+      // 1) ensure/create IDs in order
+      const finalDepId = depId ?? (await ensureDepartment(depText));
+      const finalCatId = catId ?? (await ensureCategory(finalDepId, catText));
+      const finalSubId = subId ?? (await ensureSubcategory(finalCatId, subText));
+
+      // 2) add or update grouping (IDs only)
       if (isEdit) {
         await updateGroupingTriple(initial.id, {
           departmentId: finalDepId,
@@ -259,10 +259,13 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
           subcategoryId: finalSubId,
         });
       }
+
       onClose?.();
       await onSaved?.();
-    } catch (e) {
-      alert(e.message || "Save failed");
+    } catch (err) {
+      alert(err?.message || "Save failed");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -270,12 +273,12 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
 
   return (
     <div className={overlay}>
-      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-lg">
+      <div className={panel}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
           <h3 className="text-base font-semibold text-zinc-800">
             {isEdit ? "Edit Analytics Grouping" : "Add Analytics Grouping"}
           </h3>
-          <button className="p-2 rounded-md hover:bg-zinc-100" onClick={() => onClose?.()} aria-label="Close">
+          <button className="p-2 rounded-md hover:bg-zinc-100" onClick={() => onClose?.()}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -284,46 +287,53 @@ export default function GroupingModal({ open, initial, onClose, onSaved }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ComboBox
               label="Department"
-              valueText={depText}
-              setValueText={setDepText}
+              value={depText}
+              setValue={setDepText}
               items={deps}
               disabled={false}
-              onPick={onPickDep}
+              onPick={(it) => {
+                setDepId(it.id);
+                setDepText(it.name);
+              }}
               placeholder="Type or pick…"
             />
             <ComboBox
               label="Category"
-              valueText={catText}
-              setValueText={setCatText}
+              value={catText}
+              setValue={setCatText}
               items={depId ? cats : []}
               disabled={!depText.trim()}
-              onPick={onPickCat}
+              onPick={(it) => {
+                setCatId(it.id);
+                setCatText(it.name);
+              }}
               placeholder={depId ? "Type or pick…" : "Select/enter department first"}
             />
             <ComboBox
               label="Sub-category"
-              valueText={subText}
-              setValueText={setSubText}
+              value={subText}
+              setValue={setSubText}
               items={catId ? subs : []}
               disabled={!catText.trim()}
-              onPick={onPickSub}
+              onPick={(it) => {
+                setSubId(it.id);
+                setSubText(it.name);
+              }}
               placeholder={catId ? "Type or pick…" : "Select/enter category first"}
             />
           </div>
         </div>
 
         <div className="px-5 py-4 border-t border-zinc-200 flex justify-end gap-2">
-          <button className={`${btnBase} border border-zinc-300 text-zinc-800`} onClick={() => onClose?.()}>
+          <button className={`${btn} border border-zinc-300`} onClick={() => onClose?.()}>
             Cancel
           </button>
           <button
-            className={`${btnBase} text-white ${
-              canSave ? "bg-blue-600 hover:bg-blue-700" : "bg-blue-300 cursor-not-allowed"
-            }`}
+            className={`${btn} text-white ${canSave ? "bg-blue-600 hover:bg-blue-700" : "bg-blue-300 cursor-not-allowed"}`}
             disabled={!canSave}
             onClick={onSubmit}
           >
-            {isEdit ? "Save" : "Add"}
+            {saving ? (isEdit ? "Saving…" : "Adding…") : isEdit ? "Save" : "Add"}
           </button>
         </div>
       </div>
