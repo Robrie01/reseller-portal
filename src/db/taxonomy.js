@@ -124,3 +124,49 @@ export async function ensureSubcategory(categoryId, name) {
   if (ins.error) throw ins.error;
   return ins.data.id;
 }
+
+// === QUICK-FIND: build all taxonomy triples (department/category/subcategory) in JS ===
+// Returns [{ depId, dep, catId, cat, subId, sub }]
+import { supabase } from "../lib/supabaseClient";
+
+export async function listAllTaxonomyTriples() {
+  // Pull all three tables in 3 queries, then join in-memory (fast enough for typical sizes)
+  const [{ data: deps, error: e1 }, { data: cats, error: e2 }, { data: subs, error: e3 }] =
+    await Promise.all([
+      supabase.from("departments").select("id, name").order("name", { ascending: true }),
+      supabase.from("categories").select("id, department_id, name").order("name", { ascending: true }),
+      supabase.from("subcategories").select("id, category_id, name").order("name", { ascending: true }),
+    ]);
+
+  if (e1 || e2 || e3) throw (e1 || e2 || e3);
+
+  // Index helpers
+  const catByDept = new Map(); // deptId -> [cats]
+  const subsByCat = new Map(); // catId -> [subs]
+  for (const c of (cats || [])) {
+    if (!catByDept.has(c.department_id)) catByDept.set(c.department_id, []);
+    catByDept.get(c.department_id).push(c);
+  }
+  for (const s of (subs || [])) {
+    if (!subsByCat.has(s.category_id)) subsByCat.set(s.category_id, []);
+    subsByCat.get(s.category_id).push(s);
+  }
+
+  const rows = [];
+  for (const d of (deps || [])) {
+    const cs = catByDept.get(d.id) || [];
+    for (const c of cs) {
+      const ss = subsByCat.get(c.id) || [];
+      if (ss.length === 0) {
+        // still push partial for search; sub can be empty
+        rows.push({ depId: d.id, dep: d.name, catId: c.id, cat: c.name, subId: null, sub: "" });
+      } else {
+        for (const s of ss) {
+          rows.push({ depId: d.id, dep: d.name, catId: c.id, cat: c.name, subId: s.id, sub: s.name });
+        }
+      }
+    }
+  }
+  return rows;
+}
+
