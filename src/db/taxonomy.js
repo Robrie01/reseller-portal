@@ -127,7 +127,6 @@ export async function ensureSubcategory(categoryId, name) {
 
 // === QUICK-FIND: build all taxonomy triples (department/category/subcategory) in JS ===
 // Returns [{ depId, dep, catId, cat, subId, sub }]
-import { supabase } from "../lib/supabaseClient";
 
 export async function listAllTaxonomyTriples() {
   // Pull all three tables in 3 queries, then join in-memory (fast enough for typical sizes)
